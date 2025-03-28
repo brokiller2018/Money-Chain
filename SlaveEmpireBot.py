@@ -10,7 +10,7 @@ from aiogram import F
 
 TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
 CHANNEL_ID = "@memok_da"  
-CHANNEL_LINK = "https://t.me/+O_BMk5IZxZ8yZjcy"
+CHANNEL_LINK = "https://t.me/memok_da"
 
 # Инициализация бота
 bot = Bot(
