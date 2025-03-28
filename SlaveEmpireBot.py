@@ -7,6 +7,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram import F
+from datetime import datetime, timedelta
 
 # Настройки
 TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
@@ -18,8 +19,202 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# База данных (временная)
+# База данных и улучшения
 users = {}
+upgrades = {
+    "storage": {"name": "📦 Склад", "base_price": 500, "income_bonus": 10},
+    "whip": {"name": "⛓ Кнуты", "base_price": 1000, "income_bonus": 25},
+    "food": {"name": "🍗 Еда", "base_price": 2000, "income_bonus": 50},
+    "barracks": {"name": "🏠 Бараки", "base_price": 5000, "income_bonus": 100}
+}
+
+# Клавиатуры
+def main_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💼 Работать", callback_data="work")],
+        [InlineKeyboardButton(text="🛠 Улучшения", callback_data="upgrades"),
+         InlineKeyboardButton(text="📊 Профиль", callback_data="profile")],
+        [InlineKeyboardButton(text="🔗 Рефералка", callback_data="ref_link")]
+    ])
+
+def upgrades_keyboard(user_id):
+    buttons = []
+    for upgrade_id, data in upgrades.items():
+        level = users[user_id].get("upgrades", {}).get(upgrade_id, 0)
+        price = data["base_price"] * (level + 1)
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"{data['name']} (Ур. {level}) - {price} монет",
+                callback_data=f"buy_{upgrade_id}"
+            )
+        ])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# Обработчики
+@dp.message(Command('start'))
+async def start_command(message: Message):
+    user_id = message.from_user.id
+    
+    if not await check_subscription(user_id):
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔔 Подписаться", url=CHANNEL_LINK)],
+            [InlineKeyboardButton(text="✅ Я подписался", callback_data=f"check_sub_{user_id}")]
+        ])
+        await message.answer("📌 Для доступа подпишитесь на канал:", reply_markup=kb)
+        return
+    
+    if user_id not in users:
+        users[user_id] = {
+            "balance": 100,
+            "slaves": [],
+            "owner": None,
+            "price": 100,
+            "last_work": None,
+            "upgrades": {key: 0 for key in upgrades},
+            "total_income": 0
+        }
+        await message.answer("🎮 Добро пожаловать в Slave Empire!", reply_markup=main_keyboard())
+    else:
+        await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
+
+@dp.callback_query(F.data.startswith("check_sub_"))
+async def check_sub_callback(callback: types.CallbackQuery):
+    user_id = int(callback.data.split("_")[-1])
+    if await check_subscription(user_id):
+        if user_id not in users:
+            users[user_id] = {
+                "balance": 100,
+                "slaves": [],
+                "owner": None,
+                "price": 100,
+                "last_work": None,
+                "upgrades": {key: 0 for key in upgrades},
+                "total_income": 0
+            }
+            await callback.message.edit_text("✅ Регистрация завершена!")
+            await callback.message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
+    else:
+        await callback.answer("❌ Вы не подписаны!", show_alert=True)
+    await callback.answer()
+
+@dp.callback_query(F.data == "work")
+async def work_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = users.get(user_id)
+    
+    if not user:
+        await callback.answer("❌ Сначала зарегистрируйтесь!")
+        return
+    
+    now = datetime.now()
+    cooldown = timedelta(minutes=20)
+    
+    if user["last_work"] and (now - user["last_work"]) < cooldown:
+        remaining = (user["last_work"] + cooldown - now).seconds // 60
+        await callback.answer(f"⏳ Подождите еще {remaining} минут", show_alert=True)
+        return
+    
+    # Расчет дохода
+    base_income = 50
+    slaves_income = len(user["slaves"]) * 100
+    upgrades_bonus = sum(
+        users[user_id]["upgrades"][upgrade] * data["income_bonus"]
+        for upgrade, data in upgrades.items()
+    )
+    
+    total_income = base_income + slaves_income + upgrades_bonus
+    users[user_id]["balance"] += total_income
+    users[user_id]["last_work"] = now
+    users[user_id]["total_income"] += total_income
+    
+    await callback.message.edit_text(
+        f"💼 Заработано: {total_income} монет\n\n"
+        f"📊 Разбивка:\n"
+        f"• База: {base_income}\n"
+        f"• Рабы: {slaves_income}\n"
+        f"• Улучшения: {upgrades_bonus}",
+        reply_markup=main_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "upgrades")
+async def upgrades_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id not in users:
+        await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
+        return
+    
+    await callback.message.edit_text(
+        "🛠 Улучшения увеличивают доход от работы:",
+        reply_markup=upgrades_keyboard(user_id)
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("buy_"))
+async def buy_upgrade(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    upgrade_id = callback.data.split("_")[1]
+    
+    if upgrade_id not in upgrades:
+        await callback.answer("❌ Улучшение не найдено", show_alert=True)
+        return
+    
+    current_level = users[user_id]["upgrades"].get(upgrade_id, 0)
+    price = upgrades[upgrade_id]["base_price"] * (current_level + 1)
+    
+    if users[user_id]["balance"] < price:
+        await callback.answer(f"❌ Не хватает {price - users[user_id]['balance']} монет", show_alert=True)
+        return
+    
+    users[user_id]["balance"] -= price
+    users[user_id]["upgrades"][upgrade_id] += 1
+    
+    await callback.message.edit_text(
+        f"🎉 {upgrades[upgrade_id]['name']} улучшено до уровня {users[user_id]['upgrades'][upgrade_id]}!",
+        reply_markup=upgrades_keyboard(user_id)
+    await callback.answer()
+
+@dp.callback_query(F.data == "profile")
+async def profile_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = users.get(user_id)
+    
+    if not user:
+        await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
+        return
+    
+    profile_text = (
+        f"👤 Профиль:\n"
+        f"💰 Баланс: {user['balance']} монет\n"
+        f"🧷 Рабов: {len(user['slaves'])}\n"
+        f"📈 Всего заработано: {user['total_income']}\n"
+        f"🛠 Улучшения: {sum(user['upgrades'].values())}"
+    )
+    
+    await callback.message.edit_text(profile_text, reply_markup=main_keyboard())
+    await callback.answer()
+
+@dp.callback_query(F.data == "ref_link")
+async def ref_link_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id not in users:
+        await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
+        return
+    
+    ref_link = f"https://t.me/{(await bot.get_me()).username}?start={user_id}"
+    await callback.message.edit_text(
+        f"🔗 Ваша реферальная ссылка:\n<code>{ref_link}</code>\n\n"
+        f"💎 За каждого приглашенного:\n"
+        f"+1 раб и 50 монет",
+        reply_markup=main_keyboard(),
+        parse_mode=ParseMode.HTML
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "main_menu")
+async def main_menu_handler(callback: types.CallbackQuery):
+    await callback.message.edit_text("🔮 Главное меню:", reply_markup=main_keyboard())
+    await callback.answer()
 
 async def check_subscription(user_id: int):
     try:
@@ -29,157 +224,8 @@ async def check_subscription(user_id: int):
         logging.error(f"Ошибка проверки подписки: {e}")
         return False
 
-@dp.message(Command('start'))
-async def start_command(message: Message):
-    user_id = message.from_user.id
-    
-    if not await check_subscription(user_id):
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔔 Подписаться", url=CHANNEL_LINK)],
-            [InlineKeyboardButton(text="✅ Я подписался", callback_data="check_sub")]
-        ])
-        await message.answer(
-            "📛 Для доступа к игре необходимо подписаться на наш канал:",
-            reply_markup=kb
-        )
-        return
-
-    referrer_id = message.text.split()[1] if len(message.text.split()) > 1 else None
-    if user_id not in users:
-        users[user_id] = {"balance": 100, "slaves": [], "owner": None, "price": 100}
-        
-        if referrer_id and referrer_id.isdigit():
-            referrer_id = int(referrer_id)
-            if referrer_id in users and referrer_id != user_id:
-                users[referrer_id]['slaves'].append(user_id)
-                users[user_id]['owner'] = referrer_id
-                users[referrer_id]['balance'] += 50
-                await message.answer(
-                    f"🎉 Вы зарегистрировались по приглашению!\n"
-                    f"Теперь вы в подчинении у {referrer_id}, он получил 50 монет."
-                )
-                return
-        
-        await message.answer("🆕 Вы успешно зарегистрированы в Slave Empire!")
-    else:
-        await message.answer("ℹ️ Вы уже зарегистрированы.")
-
-@dp.callback_query(F.data == "check_sub")
-async def check_subscription_callback(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    if await check_subscription(user_id):
-        if user_id not in users:
-            users[user_id] = {"balance": 100, "slaves": [], "owner": None, "price": 100}
-            await callback.message.edit_text("✅ Регистрация завершена! Доступ к игре открыт.")
-        else:
-            await callback.message.edit_text("ℹ️ Вы уже зарегистрированы.")
-    else:
-        await callback.answer("❌ Вы всё ещё не подписаны!", show_alert=True)
-    await callback.answer()
-
-@dp.message(Command('profile'))
-async def profile_command(message: Message):
-    user_id = message.from_user.id
-    if user_id in users:
-        profile_info = (
-            f"👤 Ваш профиль:\n"
-            f"💰 Баланс: {users[user_id]['balance']} монет\n"
-            f"👑 Владелец: {users[user_id]['owner'] or 'Отсутствует'}\n"
-            f"🧎 Ваши рабы: {len(users[user_id]['slaves'])} чел.\n"
-            f"🧷 Рефералов: {len(users[user_id]['slaves'])}\n"
-            f"🏷️ Ваша цена: {users[user_id]['price']} монет"
-        )
-        await message.answer(profile_info)
-    else:
-        await message.answer("❌ Вы не зарегистрированы. Введите /start")
-
-@dp.message(Command('work'))
-async def work_command(message: Message):
-    user_id = message.from_user.id
-    if user_id in users:
-        income = 10 + len(users[user_id]['slaves']) * 5
-        users[user_id]['balance'] += income
-        await message.answer(f"💼 Вы заработали {income} монет!")
-    else:
-        await message.answer("❌ Вы не зарегистрированы. Введите /start")
-
-@dp.message(Command('buy'))
-async def buy_command(message: Message):
-    user_id = message.from_user.id
-    if user_id not in users:
-        await message.answer("❌ Вы не зарегистрированы. Введите /start")
-        return
-    
-    args = message.text.split()
-    if len(args) < 2:
-        await message.answer("ℹ️ Использование: /buy @username")
-        return
-    
-    try:
-        slave_id = int(args[1].replace('@', ''))
-    except ValueError:
-        await message.answer("❌ Некорректный ID пользователя")
-        return
-    
-    if slave_id not in users:
-        await message.answer("❌ Пользователь не найден")
-        return
-    
-    if user_id == slave_id:
-        await message.answer("🤦 Вы не можете купить сами себя!")
-        return
-    
-    slave_price = users[slave_id]['price']
-    if users[user_id]['balance'] < slave_price:
-        await message.answer(f"❌ Недостаточно монет. Нужно: {slave_price}")
-        return
-    
-    old_owner = users[slave_id]['owner']
-    if old_owner:
-        users[old_owner]['balance'] += slave_price
-        users[old_owner]['slaves'].remove(slave_id)
-    
-    users[user_id]['balance'] -= slave_price
-    users[user_id]['slaves'].append(slave_id)
-    users[slave_id]['owner'] = user_id
-    users[slave_id]['price'] = int(slave_price * 1.5)
-    
-    await message.answer(
-        f"🎉 Вы купили игрока {slave_id} за {slave_price} монет!\n"
-        f"Теперь его стоимость: {users[slave_id]['price']} монет"
-    )
-@dp.message(Command('ref'))
-async def ref_command(message: Message):
-    user_id = message.from_user.id
-    if user_id not in users:
-        await message.answer("❌ Сначала зарегистрируйтесь через /start")
-        return
-    
-    ref_link = f"https://t.me/{(await bot.get_me()).username}?start={user_id}"
-    
-    await message.answer(
-        f"🔗 Ваша реферальная ссылка:\n<code>{ref_link}</code>\n\n"
-        f"💎 За каждого приглашенного:\n"
-        f"- Вы получаете +50 монет\n"
-        f"- Он становится вашим рабом\n"
-        f"- Увеличивается ваш доход от /work",
-        parse_mode=ParseMode.HTML
-    )
-@dp.message()
-async def handle_unknown(message: Message):
-    await message.answer(
-        "🤖 Я не понимаю эту команду. Доступные команды:\n"
-        "/start - Начать игру\n"
-        "/profile - Ваш профиль\n"
-        "/work - Заработать монеты\n"
-        "/buy @username - Купить игрока"
-    )
-
 async def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-    )
+    logging.basicConfig(level=logging.INFO)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
