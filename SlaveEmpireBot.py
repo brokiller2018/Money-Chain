@@ -106,27 +106,19 @@ async def check_subscription(user_id: int):
         logging.error(f"Ошибка проверки подписки: {e}")
         return False
 
-async def passive_income():
+async def passive_income_task():
     while True:
-        await asyncio.sleep(60)
+        await asyncio.sleep(60) 
         now = datetime.now()
         for user_id, user in users.items():
             if "last_passive" in user:
                 mins_passed = (now - user["last_passive"]).total_seconds() / 60
                 if mins_passed >= 1:
-                    income = (1 + user["upgrades"].get("storage", 0) * 10) * mins_passed
+                    income = (1 + user.get("upgrades", {}).get("storage", 0) * 10) * mins_passed
                     user["balance"] += income
                     user["last_passive"] = now
                     user["total_income"] += income
-                    
-                    try:
-                        await bot.send_message(
-                            user_id,
-                            f"⏳ Пассивный доход: +{income:.2f}₽\n"
-                            f"▸ Склад: {user['upgrades'].get('storage', 0)} ур."
-                        )
-                    except:
-                        pass
+            
 
 # Обработчики команд
 @dp.message(Command('start'))
@@ -207,14 +199,53 @@ async def search_user_handler(callback: types.CallbackQuery):
     )
     await callback.answer()
 
+@dp.callback_query(F.data == WORK)
+async def work_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = users.get(user_id)
+    
+    if not user:
+        await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
+        return
+    
+    now = datetime.now()
+    cooldown = timedelta(minutes=20)
+    
+    if user["last_work"] and (now - user["last_work"]) < cooldown:
+        remaining = (user["last_work"] + cooldown - now).seconds // 60
+        await callback.answer(f"⏳ Подождите еще {remaining} минут", show_alert=True)
+        return
+    
+    base_income = 50
+    slaves_income = len(user["slaves"]) * 100
+    upgrades_bonus = sum(
+        user.get("upgrades", {}).get(upgrade, 0) * data["income_bonus"]
+        for upgrade, data in upgrades.items()
+    )
+    
+    total_income = base_income + slaves_income + upgrades_bonus
+    user["balance"] += total_income
+    user["last_work"] = now
+    user["total_income"] += total_income
+    
+    await callback.message.edit_text(
+        f"💼 Заработано: {total_income}₽\n\n"
+        f"📊 Разбивка:\n"
+        f"• База: {base_income}₽\n"
+        f"• Рабы: {slaves_income}₽\n"
+        f"• Улучшения: {upgrades_bonus}₽",
+        reply_markup=main_keyboard()
+    )
+    await callback.answer()
+    
 @dp.message(F.text & ~F.text.startswith('/'))
 async def process_username(message: Message):
-    username = message.text.strip().lower()
+    username = message.text.strip().lower().replace('@', '')  # Удаляем @ если есть
     buyer_id = message.from_user.id
     
     found_user = None
     for uid, data in users.items():
-        if data["username"] and data["username"].lower() == username:
+        if data.get("username", "").lower() == username:
             found_user = uid
             break
     
@@ -224,8 +255,13 @@ async def process_username(message: Message):
     if found_user == buyer_id:
         return await message.reply("🌀 Нельзя купить самого себя!")
     
-    slave = users[found_user]
-    price = slave["price"]
+    slave = users.get(found_user, {})
+    price = slave.get("price", 100)
+    
+    owner_info = "Свободен"
+    if slave.get("owner"):
+        owner_data = users.get(slave["owner"], {})
+        owner_info = f"@{owner_data.get('username', 'unknown')}"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"💰 Купить за {price}₽", callback_data=f"{SLAVE_PREFIX}{found_user}")],
@@ -233,11 +269,12 @@ async def process_username(message: Message):
     ])
     
     await message.reply(
-        f"🔎 <b>Найден игрок:</b> @{slave['username']}\n"
+        f"🔎 <b>Найден игрок:</b> @{slave.get('username', 'unknown')}\n"
         f"▸ Цена: {price}₽\n"
-        f"▸ Владелец: @{users[slave['owner']]['username'] if slave['owner'] else 'Свободен'}",
+        f"▸ Владелец: {owner_info}",
         reply_markup=kb
     )
+
 
 # Обновленный профиль
 @dp.callback_query(F.data == PROFILE)
@@ -249,40 +286,39 @@ async def profile_handler(callback: types.CallbackQuery):
         await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
         return
     
-    slaves_count = len(user["slaves"])
-    max_slaves = 5 + user["upgrades"]["barracks"] * 5
-    income_per_sec = (1 + user["upgrades"]["storage"] * 10) / 60
+    slaves_count = len(user.get("slaves", []))
+    max_slaves = 5 + user.get("upgrades", {}).get("barracks", 0) * 5
+    income_per_sec = (1 + user.get("upgrades", {}).get("storage", 0) * 10) / 60
     
     text = (
-        f"👑 <b>Профиль @{user['username']}</b>\n\n"
-        f"▸ 💰 Баланс: {user['balance']:.1f}₽\n"
+        f"👑 <b>Профиль @{user.get('username', 'unknown')}</b>\n\n"
+        f"▸ 💰 Баланс: {user.get('balance', 0):.1f}₽\n"
         f"▸ ⚡ Доход/сек: {income_per_sec:.3f}₽\n"
         f"▸ 👥 Рабы: {slaves_count}/{max_slaves}\n"
-        f"▸ 🛠 Улучшения: {sum(user['upgrades'].values())}\n"
-        f"▸ 📈 Всего заработано: {user['total_income']:.1f}₽\n\n"
+        f"▸ 🛠 Улучшения: {sum(user.get('upgrades', {}).values())}\n"
+        f"▸ 📈 Всего заработано: {user.get('total_income', 0):.1f}₽\n\n"
     )
     
-    if user["owner"]:
-        text += f"🔗 Владелец: @{users[user['owner']]['username']}\n"
+    if user.get("owner"):
+        owner_username = users.get(user["owner"], {}).get("username", "unknown")
+        text += f"🔗 Владелец: @{owner_username}\n"
     else:
         text += "🔗 Вы свободный человек!\n"
     
     if slaves_count > 0:
         text += "\n<b>Топ рабов:</b>\n"
-        for uid in user["slaves"][:3]:
-            text += f"▸ @{users[uid]['username']} ({users[uid]['price']}₽)\n"
+        for uid in user.get("slaves", [])[:3]:
+            slave_data = users.get(uid, {})
+            text += f"▸ @{slave_data.get('username', 'unknown')} ({slave_data.get('price', 0)}₽)\n"
     
     await callback.message.edit_text(text, reply_markup=main_keyboard())
     await callback.answer()
 
-# Запуск пассивного дохода
 async def on_startup():
-    asyncio.create_task(passive_income_task())
-
-# Остальные обработчики остаются без изменений...
+    asyncio.create_task(passive_income_task())  # Теперь имя функции совпадает
 
 async def main():
-    asyncio.create_task(passive_income())
+    await on_startup()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
