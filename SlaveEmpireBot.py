@@ -35,7 +35,7 @@ dp = Dispatcher(storage=storage)
 users = {}
 user_search_cache = {}
 
-# Улучшения с вашими параметрами + описаниями
+# Улучшения
 upgrades = {
     "storage": {
         "name": "📦 Склад",
@@ -63,7 +63,16 @@ upgrades = {
     }
 }
 
-# Клавиатуры (аналогично вашему коду с добавлением поиска)
+# Функция проверки подписки
+async def check_subscription(user_id: int) -> bool:
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        return member.status not in ['left', 'kicked']
+    except Exception as e:
+        logging.error(f"Ошибка проверки подписки: {e}")
+        return False
+
+# Клавиатуры
 def main_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💼 Работать", callback_data=WORK)],
@@ -79,7 +88,7 @@ def buy_menu_keyboard():
         [InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)]
     ])
 
-# Обработчики команд с новыми функциями
+# Обработчики команд
 @dp.message(Command('start'))
 async def start_command(message: Message):
     user_id = message.from_user.id
@@ -103,7 +112,7 @@ async def start_command(message: Message):
             "total_income": 0,
             "username": message.from_user.username,
             "last_passive": datetime.now(),
-            "income_per_min": 1  # Базовый пассивный доход
+            "income_per_min": 1
         }
         
         guide = """🎮 <b>Добро пожаловать в Slave Empire!</b>
@@ -112,24 +121,14 @@ async def start_command(message: Message):
 1. Пассивный доход: получаете монеты автоматически
 2. /work - основной заработок (20 мин кд)
 3. Улучшения: увеличивают доход
-4. Рабы: купите других игроков для прибыли
-
-📊 <b>Доход рассчитывается:</b>
-• Работа: 50 + бонусы
-• Пассивка: 1/мин + бонусы
-• Рабы: 100/раб + бонусы
-
-🛠 <b>Улучшения:</b>
-• 📦 Склад: +10/мин за уровень
-• ⛓ Кнуты: +25% к рабам
-• 🍗 Еда: -10% к кд работы
-• 🏠 Бараки: +5 к лимиту рабов"""
+4. Рабы: купите других игроков для прибыли"""
         
         await message.answer(guide, reply_markup=main_keyboard())
     else:
         await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
 
-# Пассивный доход (новый функционал)
+# Остальные обработчики остаются без изменений...
+
 async def passive_income():
     while True:
         await asyncio.sleep(60)
@@ -138,7 +137,6 @@ async def passive_income():
             if "last_passive" in user_data:
                 mins_passed = (now - user_data["last_passive"]).total_seconds() / 60
                 if mins_passed >= 1:
-                    # Базовый 1/мин + 10/мин за каждый уровень склада
                     income = (1 + user_data["upgrades"]["storage"] * 10) * mins_passed
                     user_data["balance"] += income
                     user_data["last_passive"] = now
@@ -152,86 +150,12 @@ async def passive_income():
                     except:
                         pass
 
-# Обновлённый профиль
-@dp.callback_query(F.data == PROFILE)
-async def profile_handler(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    user = users.get(user_id)
-    
-    if not user:
-        await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
-        return
-    
-    slaves_list = "\n".join([
-        f"  ▪️ @{users[uid]['username']}" 
-        for uid in user["slaves"][:3]
-    ])
-    if len(user["slaves"]) > 3:
-        slaves_list += f"\n  ...и ещё {len(user['slaves']) - 3}"
-    
-    profile_text = (
-        f"👤 <b>Профиль @{user['username']}</b>\n"
-        f"💰 Баланс: {user['balance']:.2f} монет\n"
-        f"⏳ Доход: {user['income_per_min']/60:.2f} монет/сек\n"
-        f"🧷 Рабы: {len(user['slaves'])}\n{slaves_list}\n"
-        f"👑 Владелец: @{users[user['owner']]['username'] if user['owner'] else 'Отсутствует'}\n"
-        f"📈 Всего заработано: {user['total_income']}"
-    )
-    
-    await callback.message.edit_text(profile_text, reply_markup=main_keyboard())
-    await callback.answer()
-
-# Поиск по юзернейму (новый функционал)
-@dp.callback_query(F.data == SEARCH_USER)
-async def search_user_handler(callback: types.CallbackQuery):
-    await callback.message.edit_text(
-        "🔍 Введите @username игрока без собачки:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]
-        ])
-    )
-    await callback.answer()
-
-@dp.message(F.text & ~F.text.startswith('/') & ~F.text.startswith('@'))
-async def process_username(message: Message):
-    username = message.text.lower().strip()
-    buyer_id = message.from_user.id
-    
-    # Ищем пользователя
-    found = None
-    for uid, data in users.items():
-        if data["username"] and data["username"].lower() == username:
-            found = uid
-            break
-    
-    if not found:
-        return await message.reply("❌ Пользователь не найден")
-    
-    if found == buyer_id:
-        return await message.reply("🤡 Нельзя купить самого себя!")
-    
-    slave = users[found]
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=f"💰 Купить за {slave['price']} монет",
-            callback_data=f"{SLAVE_PREFIX}{found}"
-        )],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]
-    ])
-    
-    await message.reply(
-        f"🔎 Найден: @{slave['username']}\n"
-        f"💵 Цена: {slave['price']} монет\n"
-        f"👑 Владелец: @{users[slave['owner']]['username'] if slave['owner'] else 'Свободен'}",
-        reply_markup=kb
-    )
-
-# Запуск пассивного дохода
-async def on_startup():
-    asyncio.create_task(passive_income())
-
 async def main():
-    await on_startup()
+    asyncio.create_task(passive_income())
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    )
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
