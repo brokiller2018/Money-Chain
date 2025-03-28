@@ -2,8 +2,9 @@ import logging
 import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils import executor
+
 
 TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
 bot = Bot(token=TOKEN)
