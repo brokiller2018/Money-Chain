@@ -9,7 +9,7 @@ from aiogram.utils import executor
 TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
 bot = Bot(token=TOKEN)
 storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
+dp = Dispatcher(storage=storage)
 
 # Простая база данных (временная, для тестов)
 users = {}  # user_id: {"balance": 100, "slaves": [], "owner": None, "price": 100}
