@@ -86,6 +86,7 @@ async def profile_command(message: Message):
             f"💰 Баланс: {users[user_id]['balance']} монет\n"
             f"👑 Владелец: {users[user_id]['owner'] or 'Отсутствует'}\n"
             f"🧎 Ваши рабы: {len(users[user_id]['slaves'])} чел.\n"
+            f"🧷 Рефералов: {len(users[user_id]['slaves'])}\n"
             f"🏷️ Ваша цена: {users[user_id]['price']} монет"
         )
         await message.answer(profile_info)
@@ -147,7 +148,23 @@ async def buy_command(message: Message):
         f"🎉 Вы купили игрока {slave_id} за {slave_price} монет!\n"
         f"Теперь его стоимость: {users[slave_id]['price']} монет"
     )
-
+@dp.message(Command('ref'))
+async def ref_command(message: Message):
+    user_id = message.from_user.id
+    if user_id not in users:
+        await message.answer("❌ Сначала зарегистрируйтесь через /start")
+        return
+    
+    ref_link = f"https://t.me/{(await bot.get_me()).username}?start={user_id}"
+    
+    await message.answer(
+        f"🔗 Ваша реферальная ссылка:\n<code>{ref_link}</code>\n\n"
+        f"💎 За каждого приглашенного:\n"
+        f"- Вы получаете +50 монет\n"
+        f"- Он становится вашим рабом\n"
+        f"- Увеличивается ваш доход от /work",
+        parse_mode=ParseMode.HTML
+    )
 @dp.message()
 async def handle_unknown(message: Message):
     await message.answer(
