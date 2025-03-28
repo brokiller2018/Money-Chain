@@ -8,58 +8,73 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram import F
 
+# Настройки бота
 TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
-CHANNEL_ID = "@memok_da"  
+CHANNEL_ID = "@memok_da"  # Используйте цифровой ID (-100...) для приватных каналов
 CHANNEL_LINK = "https://t.me/memok_da"
 
-# Инициализация бота
-bot = Bot(
-    token=TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
+# Инициализация
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# База данных
+# Временная "база данных"
 users = {}
+
+# Обработчик неизвестных команд
+@dp.message()
+async def unknown_command(message: Message):
+    await message.answer("🤖 Я не понимаю эту команду. Доступные команды:\n"
+                       "/start - начать игру\n"
+                       "/profile - ваш профиль\n"
+                       "/work - заработать монеты\n"
+                       "/buy @username - купить игрока")
+
+# Проверка подписки
+async def check_subscription(user_id: int):
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        return member.status not in ['left', 'kicked']
+    except Exception as e:
+        logging.error(f"Ошибка проверки подписки: {e}")
+        return False
 
 @dp.message(Command('start'))
 async def start_command(message: Message):
     user_id = message.from_user.id
     
-    # Проверка подписки
-    try:
-        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
-        if member.status in ['left', 'kicked']:
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Подписаться на канал", url=CHANNEL_LINK)],
-                [InlineKeyboardButton(text="Я подписался", callback_data="check_sub")]
-            ])
-            await message.answer(
-                "❌ Для игры нужно подписаться на наш канал!",
-                reply_markup=keyboard
-            )
-            return
-    except Exception as e:
-        logging.error(f"Ошибка проверки подписки: {e}")
-        await message.answer("⚠️ Ошибка проверки подписки. Попробуйте позже.")
+    # Проверка подписки с кнопками
+    if not await check_subscription(user_id):
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔔 Подписаться", url=CHANNEL_LINK)],
+            [InlineKeyboardButton(text="✅ Проверить", callback_data="check_sub")]
+        ])
+        await message.answer(
+            "📌 Для доступа к игре подпишитесь на наш канал:",
+            reply_markup=kb
+        )
         return
 
-    # Регистрация
+    # Регистрация пользователя
     referrer_id = message.text.split()[1] if len(message.text.split()) > 1 else None
     if user_id not in users:
         users[user_id] = {"balance": 100, "slaves": [], "owner": None, "price": 100}
+        
         if referrer_id and referrer_id.isdigit():
             referrer_id = int(referrer_id)
             if referrer_id in users and referrer_id != user_id:
                 users[referrer_id]['slaves'].append(user_id)
                 users[user_id]['owner'] = referrer_id
                 users[referrer_id]['balance'] += 50
-                await message.answer(f"Вы зарегистрировались! Теперь вы раб {referrer_id}, он получил 50 монет.")
+                await message.answer(
+                    f"👋 Вы зарегистрировались по приглашению!\n"
+                    f"Теперь вы подчиненный игрока {referrer_id}, он получил 50 монет."
+                )
                 return
-        await message.answer("✅ Вы успешно зарегистрированы в игре!")
+        
+        await message.answer("🎮 Добро пожаловать в Slave Empire!")
     else:
-        await message.answer("Вы уже зарегистрированы!")
+        await message.answer("ℹ️ Вы уже зарегистрированы в игре.")
 
 @dp.callback_query(F.data == "check_sub")
 async def check_subscription(callback: types.CallbackQuery):
@@ -148,8 +163,15 @@ async def buy_command(message: Message):
         f"Теперь его цена: {users[slave_id]['price']} монет"
     )
 
+
 async def main():
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    )
+    
+    # Удаляем вебхук (если был) и запускаем поллинг
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
