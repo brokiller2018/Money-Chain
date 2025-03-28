@@ -10,7 +10,7 @@ from aiogram import F
 
 # Настройки
 TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
-CHANNEL_ID = "@memok_da"  # Замените на цифровой ID для приватных каналов (-100...)
+CHANNEL_ID = "@memok_da"
 CHANNEL_LINK = "https://t.me/memok_da"
 
 # Инициализация
@@ -22,7 +22,6 @@ dp = Dispatcher(storage=storage)
 users = {}
 
 async def check_subscription(user_id: int):
-    """Проверка подписки на канал"""
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
         return member.status not in ['left', 'kicked']
@@ -34,7 +33,6 @@ async def check_subscription(user_id: int):
 async def start_command(message: Message):
     user_id = message.from_user.id
     
-    # Проверка подписки
     if not await check_subscription(user_id):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔔 Подписаться", url=CHANNEL_LINK)],
@@ -46,7 +44,6 @@ async def start_command(message: Message):
         )
         return
 
-    # Регистрация
     referrer_id = message.text.split()[1] if len(message.text.split()) > 1 else None
     if user_id not in users:
         users[user_id] = {"balance": 100, "slaves": [], "owner": None, "price": 100}
@@ -88,7 +85,7 @@ async def profile_command(message: Message):
             f"👤 Ваш профиль:\n"
             f"💰 Баланс: {users[user_id]['balance']} монет\n"
             f"👑 Владелец: {users[user_id]['owner'] or 'Отсутствует'}\n"
-            f"🧎 Ваши рабы: {len(users[user_id]['slaves']} чел.\n"
+            f"🧎 Ваши рабы: {len(users[user_id]['slaves'])} чел.\n"
             f"🏷️ Ваша цена: {users[user_id]['price']} монет"
         )
         await message.answer(profile_info)
@@ -136,7 +133,6 @@ async def buy_command(message: Message):
         await message.answer(f"❌ Недостаточно монет. Нужно: {slave_price}")
         return
     
-    # Совершаем покупку
     old_owner = users[slave_id]['owner']
     if old_owner:
         users[old_owner]['balance'] += slave_price
