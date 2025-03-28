@@ -90,7 +90,7 @@ def upgrades_keyboard(user_id):
         effect = ""
         
         if data["effect"] == "passive":
-            effect = f"(+{data['income_bonus']*{level+1}/мин)"
+            effect = f"(+{data['income_bonus']*{level+1}/мин})"
         elif data["effect"] == "work":
             effect = f"(+{data['income_bonus']*level}%)"
         
@@ -146,7 +146,7 @@ WELCOME_MESSAGE = """
 4. Захватывай рабов для дохода
 
 📊 <b>Доход в секунду:</b>
-▸ Базовая ставка: <i>0.016₭/сек</i>
+▸ Базовая ставка: <i>0.016₽/сек</i>
 ▸ Увеличивается улучшениями
 ▸ Рабы дают бонусы
 
@@ -229,14 +229,14 @@ async def process_username(message: Message):
     text = (
         f"🔎 <b>Результаты поиска:</b>\n\n"
         f"▸ Игрок: @{slave['username']}\n"
-        f"▸ Стоимость: {price}₭\n"
+        f"▸ Стоимость: {price}₽\n"
         f"▸ Владелец: @{users[slave['owner']]['username'] if slave['owner'] else 'Свободен'}\n"
         f"▸ Уровни улучшений: {sum(slave['upgrades'].values()}\n\n"
         f"💡 Цена увеличивается на 50% после покупки"
     )
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"💰 Купить за {price}₭", callback_data=f"{SLAVE_PREFIX}{found_user}")],
+        [InlineKeyboardButton(text=f"💰 Купить за {price}₽", callback_data=f"{SLAVE_PREFIX}{found_user}")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]
     ])
     
@@ -258,11 +258,11 @@ async def profile_handler(callback: types.CallbackQuery):
     
     text = (
         f"👑 <b>Профиль @{user['username']}</b>\n\n"
-        f"▸ 💰 Баланс: {user['balance']:.1f}₭\n"
-        f"▸ ⚡ Доход/сек: {income_per_sec:.3f}₭\n"
+        f"▸ 💰 Баланс: {user['balance']:.1f}₽\n"
+        f"▸ ⚡ Доход/сек: {income_per_sec:.3f}₽\n"
         f"▸ 👥 Рабы: {slaves_count}/{max_slaves}\n"
         f"▸ 🛠 Улучшения: {sum(user['upgrades'].values())}\n"
-        f"▸ 📈 Всего заработано: {user['total_income']:.1f}₭\n\n"
+        f"▸ 📈 Всего заработано: {user['total_income']:.1f}₽\n\n"
     )
     
     if user["owner"]:
@@ -273,7 +273,7 @@ async def profile_handler(callback: types.CallbackQuery):
     if slaves_count > 0:
         text += "\n<b>Топ рабов:</b>\n"
         for uid in user["slaves"][:3]:
-            text += f"▸ @{users[uid]['username']} ({users[uid]['price']}₭)\n"
+            text += f"▸ @{users[uid]['username']} ({users[uid]['price']}₽)\n"
     
     await callback.message.edit_text(text, reply_markup=main_keyboard())
     await callback.answer()
