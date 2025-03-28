@@ -1,23 +1,23 @@
 import logging
 import asyncio
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message
+from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.utils import executor
-
+from aiogram.types import Message
+from aiogram.enums import ParseMode
 
 TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
-bot = Bot(token=TOKEN)
+bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 # Простая база данных (временная, для тестов)
 users = {}  # user_id: {"balance": 100, "slaves": [], "owner": None, "price": 100}
 
-@dp.message_handler(commands=['start'])
+@dp.message(Command('start'))
 async def start_command(message: Message):
     user_id = message.from_user.id
-    referrer_id = message.get_args()  # Получаем реферала, если есть
+    referrer_id = message.text.split()[1] if len(message.text.split()) > 1 else None
     if user_id not in users:
         users[user_id] = {"balance": 100, "slaves": [], "owner": None, "price": 100}
         if referrer_id and referrer_id.isdigit():
@@ -30,7 +30,7 @@ async def start_command(message: Message):
                 return
     await message.answer("Вы зарегистрированы в игре!")
 
-@dp.message_handler(commands=['profile'])
+@dp.message(Command('profile'))
 async def profile_command(message: Message):
     user_id = message.from_user.id
     if user_id in users:
@@ -42,7 +42,7 @@ async def profile_command(message: Message):
     else:
         await message.answer("Вы не зарегистрированы. Введите /start")
 
-@dp.message_handler(commands=['work'])
+@dp.message(Command('work'))
 async def work_command(message: Message):
     user_id = message.from_user.id
     if user_id in users:
@@ -52,7 +52,7 @@ async def work_command(message: Message):
     else:
         await message.answer("Вы не зарегистрированы. Введите /start")
 
-@dp.message_handler(commands=['buy'])
+@dp.message(Command('buy'))
 async def buy_command(message: Message):
     args = message.text.split()
     if len(args) < 2:
@@ -88,6 +88,9 @@ async def buy_command(message: Message):
     
     await message.answer(f"Вы купили {slave_id} за {slave_price} монет! Теперь его цена {users[slave_id]['price']}.")
 
-if __name__ == "__main__":
+async def main():
     logging.basicConfig(level=logging.INFO)
-    executor.start_polling(dp, skip_updates=True)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
