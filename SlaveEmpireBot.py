@@ -90,7 +90,7 @@ def upgrades_keyboard(user_id):
         effect = ""
         
         if data["effect"] == "passive":
-            effect = f"(+{data['income_bonus']*{level+1}/мин})"
+            effect = f"(+{data['income_bonus'] * (level + 1)}/мин)"
         elif data["effect"] == "work":
             effect = f"(+{data['income_bonus']*level}%)"
         
@@ -113,7 +113,7 @@ async def passive_income_task():
                 time_diff = (now - user["last_passive"]).total_seconds() / 60
                 if time_diff >= 1:
                     # Расчет пассивного дохода
-                    passive = (1 + user["upgrades"]["storage"] * 10) * time_diff
+                    passive = (1 + user["upgrades"].get("storage", 0) * 10) * time_diff
                     user["balance"] += passive
                     user["last_passive"] = now
                     user["total_income"] += passive
@@ -192,15 +192,17 @@ async def start_command(message: Message):
     else:
         await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
 
-# Поиск по юзернейму (новая реализация)
 @dp.callback_query(F.data == SEARCH_USER)
 async def search_user_handler(callback: types.CallbackQuery):
     await callback.message.edit_text(
         "🔍 <b>Поиск раба:</b>\n"
         "Введите @username игрока (без собачки):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]
-        ])
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]
+            ]
+        )
+    )
     await callback.answer()
 
 @dp.message(F.text & ~F.text.startswith('/'))
@@ -231,7 +233,7 @@ async def process_username(message: Message):
         f"▸ Игрок: @{slave['username']}\n"
         f"▸ Стоимость: {price}₽\n"
         f"▸ Владелец: @{users[slave['owner']]['username'] if slave['owner'] else 'Свободен'}\n"
-        f"▸ Уровни улучшений: {sum(slave['upgrades'].values()}\n\n"
+        f"▸ Уровни улучшений: {sum(slave['upgrades'].values())}\n\n"
         f"💡 Цена увеличивается на 50% после покупки"
     )
     
