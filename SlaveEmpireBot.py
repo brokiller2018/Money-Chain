@@ -9,7 +9,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram import F
 from datetime import datetime, timedelta
 
-# Настройки (ваши данные сохранены)
+# Настройки
 TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
 CHANNEL_ID = "@memok_da"
 CHANNEL_LINK = "https://t.me/memok_da"
@@ -35,35 +35,31 @@ dp = Dispatcher(storage=storage)
 users = {}
 user_search_cache = {}
 
-# Улучшения с подробными описаниями и эффектами
+# Улучшения
 upgrades = {
     "storage": {
         "name": "📦 Склад",
         "base_price": 500,
         "income_bonus": 10,
-        "description": "+10 монет/мин к пассивному доходу за уровень",
-        "effect": "passive"
+        "description": "+10 монет/мин к пассивному доходу"
     },
     "whip": {
         "name": "⛓ Кнуты", 
         "base_price": 1000,
         "income_bonus": 25,
-        "description": "+25% к доходу от работы за уровень",
-        "effect": "work"
+        "description": "+25% к доходу от работы"
     },
     "food": {
         "name": "🍗 Еда",
         "base_price": 2000,
         "income_bonus": 50,
-        "description": "-10% к времени ожидания работы за уровень",
-        "effect": "cooldown"
+        "description": "-10% к времени ожидания работы"
     },
     "barracks": {
         "name": "🏠 Бараки",
         "base_price": 5000,
         "income_bonus": 100,
-        "description": "+5 к максимальному количеству рабов за уровень",
-        "effect": "slaves"
+        "description": "+5 к лимиту рабов"
     }
 }
 
@@ -83,77 +79,56 @@ def main_keyboard():
 
 def upgrades_keyboard(user_id):
     buttons = []
-    user = users[user_id]
     for upgrade_id, data in upgrades.items():
-        level = user["upgrades"].get(upgrade_id, 0)
+        level = users[user_id].get("upgrades", {}).get(upgrade_id, 0)
         price = data["base_price"] * (level + 1)
-        effect = ""
-        
-        if data["effect"] == "passive":
-            effect = f"(+{data['income_bonus'] * (level + 1)}/мин)"
-        elif data["effect"] == "work":
-            effect = f"(+{data['income_bonus']*level}%)"
-        
         buttons.append([
             InlineKeyboardButton(
-                text=f"{data['name']} ⟠{level} • {price}₭ {effect}",
+                text=f"{data['name']} (Ур. {level}) - {price}₽ | {data['description']}",
                 callback_data=f"{UPGRADE_PREFIX}{upgrade_id}"
             )
         ])
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# Пассивный доход
-async def passive_income_task():
+def buy_menu_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 Поиск по юзернейму", callback_data=SEARCH_USER)],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)]
+    ])
+
+# Вспомогательные функции
+async def check_subscription(user_id: int):
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        return member.status not in ['left', 'kicked']
+    except Exception as e:
+        logging.error(f"Ошибка проверки подписки: {e}")
+        return False
+
+async def passive_income():
     while True:
         await asyncio.sleep(60)
         now = datetime.now()
         for user_id, user in users.items():
             if "last_passive" in user:
-                time_diff = (now - user["last_passive"]).total_seconds() / 60
-                if time_diff >= 1:
-                    # Расчет пассивного дохода
-                    passive = (1 + user["upgrades"].get("storage", 0) * 10) * time_diff
-                    user["balance"] += passive
+                mins_passed = (now - user["last_passive"]).total_seconds() / 60
+                if mins_passed >= 1:
+                    income = (1 + user["upgrades"].get("storage", 0) * 10) * mins_passed
+                    user["balance"] += income
                     user["last_passive"] = now
-                    user["total_income"] += passive
+                    user["total_income"] += income
                     
                     try:
                         await bot.send_message(
                             user_id,
-                            f"⏳ Пассивный доход: +{passive:.1f}₭\n"
-                            f"▸ Склад: {user['upgrades']['storage']} ур."
+                            f"⏳ Пассивный доход: +{income:.2f}₽\n"
+                            f"▸ Склад: {user['upgrades'].get('storage', 0)} ур."
                         )
-                    except Exception as e:
-                        logging.error(f"Ошибка отправки: {e}")
+                    except:
+                        pass
 
-# Приветственное сообщение (полностью переработано)
-WELCOME_MESSAGE = """
-🎮 <b>ДОБРО ПОЖАЛОВАТЬ В РАБОВЛАДЕЛЬЧЕСКУЮ ИМПЕРИЮ!</b> 👑
-
-⚡️ <i>Стань самым могущественным правителем в этом жестоком мире!</i>
-
-✨ <b>Основные возможности:</b>
-▸ 💼 Зарабатывай монеты работой
-▸ 🛠 Улучшай свои владения
-▸ 👥 Покупай других игроков
-▸ 📈 Получай пассивный доход
-
-🚀 <b>Быстрый старт:</b>
-1. Используй кнопку <b>💼 Работать</b> каждые 20 мин
-2. Вкладывайся в улучшения
-3. Приглашай друзей по рефералке
-4. Захватывай рабов для дохода
-
-📊 <b>Доход в секунду:</b>
-▸ Базовая ставка: <i>0.016₽/сек</i>
-▸ Увеличивается улучшениями
-▸ Рабы дают бонусы
-
-⚔️ <b>Твой путь к величию начинается сейчас!</b>
-"""
-
-# Обработчик старта
+# Обработчики команд
 @dp.message(Command('start'))
 async def start_command(message: Message):
     user_id = message.from_user.id
@@ -178,25 +153,52 @@ async def start_command(message: Message):
             "total_income": 0,
             "username": username,
             "last_passive": datetime.now(),
-            "income_per_sec": 0.0167  # 1 монета в минуту
+            "income_per_sec": 0.0167
         }
-        await message.answer(WELCOME_MESSAGE, reply_markup=main_keyboard())
-        await message.answer(
-            f"👤 <b>@{username}</b>, твои стартовые ресурсы:\n"
-            f"▸ 💰 100 монет\n"
-            f"▸ 🛠 0 улучшений\n"
-            f"▸ 👥 0 рабов\n\n"
-            f"⚡️ Используй меню ниже для управления!",
-            reply_markup=main_keyboard()
-        )
+        
+        welcome_msg = """
+🎮 <b>ДОБРО ПОЖАЛОВАТЬ В РАБОВЛАДЕЛЬЧЕСКУЮ ИМПЕРИЮ!</b> 👑
+
+⚡️ <b>Основные возможности:</b>
+▸ 💼 Зарабатывай монеты работой (каждые 20 мин)
+▸ 🛠 Улучшай свои владения
+▸ 👥 Покупай других игроков
+▸ 📈 Получай пассивный доход (1₽/мин)
+
+💰 <b>Доход в секунду:</b> 0.016₽
+        """
+        
+        await message.answer(welcome_msg, reply_markup=main_keyboard())
     else:
         await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
+
+@dp.callback_query(F.data.startswith(CHECK_SUB))
+async def check_sub_callback(callback: types.CallbackQuery):
+    user_id = int(callback.data.replace(CHECK_SUB, ""))
+    if await check_subscription(user_id):
+        if user_id not in users:
+            users[user_id] = {
+                "balance": 100,
+                "slaves": [],
+                "owner": None,
+                "price": 100,
+                "last_work": None,
+                "upgrades": {key: 0 for key in upgrades},
+                "total_income": 0,
+                "username": callback.from_user.username,
+                "last_passive": datetime.now(),
+                "income_per_sec": 0.0167
+            }
+        await callback.message.edit_text("✅ Регистрация завершена!")
+        await callback.message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
+    else:
+        await callback.answer("❌ Вы не подписаны!", show_alert=True)
+    await callback.answer()
 
 @dp.callback_query(F.data == SEARCH_USER)
 async def search_user_handler(callback: types.CallbackQuery):
     await callback.message.edit_text(
-        "🔍 <b>Поиск раба:</b>\n"
-        "Введите @username игрока (без собачки):",
+        "🔍 Введите @username игрока (без собачки):",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]
@@ -210,12 +212,9 @@ async def process_username(message: Message):
     username = message.text.strip().lower()
     buyer_id = message.from_user.id
     
-    if not username.startswith('@'):
-        username = '@' + username
-    
     found_user = None
     for uid, data in users.items():
-        if data["username"] and data["username"].lower() == username[1:].lower():
+        if data["username"] and data["username"].lower() == username:
             found_user = uid
             break
     
@@ -228,21 +227,17 @@ async def process_username(message: Message):
     slave = users[found_user]
     price = slave["price"]
     
-    text = (
-        f"🔎 <b>Результаты поиска:</b>\n\n"
-        f"▸ Игрок: @{slave['username']}\n"
-        f"▸ Стоимость: {price}₽\n"
-        f"▸ Владелец: @{users[slave['owner']]['username'] if slave['owner'] else 'Свободен'}\n"
-        f"▸ Уровни улучшений: {sum(slave['upgrades'].values())}\n\n"
-        f"💡 Цена увеличивается на 50% после покупки"
-    )
-    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"💰 Купить за {price}₽", callback_data=f"{SLAVE_PREFIX}{found_user}")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]
     ])
     
-    await message.reply(text, reply_markup=kb)
+    await message.reply(
+        f"🔎 <b>Найден игрок:</b> @{slave['username']}\n"
+        f"▸ Цена: {price}₽\n"
+        f"▸ Владелец: @{users[slave['owner']]['username'] if slave['owner'] else 'Свободен'}",
+        reply_markup=kb
+    )
 
 # Обновленный профиль
 @dp.callback_query(F.data == PROFILE)
@@ -286,7 +281,13 @@ async def on_startup():
 
 # Остальные обработчики остаются без изменений...
 
+async def main():
+    asyncio.create_task(passive_income())
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    )
+    await dp.start_polling(bot)
+
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(on_startup())
-    asyncio.run(dp.start_polling(bot))
+    asyncio.run(main())
