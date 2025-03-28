@@ -14,6 +14,17 @@ TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
 CHANNEL_ID = "@memok_da"
 CHANNEL_LINK = "https://t.me/memok_da"
 
+# Константы для callback-данных
+UPGRADE_PREFIX = "upg_"  # Для улучшений
+SLAVE_PREFIX = "slv_"    # Для рабов
+MAIN_MENU = "main_menu"
+WORK = "work"
+UPGRADES = "upgrades"
+PROFILE = "profile"
+REF_LINK = "ref_link"
+BUY_MENU = "buy_menu"
+CHECK_SUB = "check_sub_"
+
 # Инициализация
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 storage = MemoryStorage()
@@ -31,11 +42,11 @@ upgrades = {
 # Клавиатуры
 def main_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💼 Работать", callback_data="work")],
-        [InlineKeyboardButton(text="🛠 Улучшения", callback_data="upgrades"),
-         InlineKeyboardButton(text="📊 Профиль", callback_data="profile")],
-        [InlineKeyboardButton(text="👥 Купить раба", callback_data="buy_menu")],
-        [InlineKeyboardButton(text="🔗 Рефералка", callback_data="ref_link")]
+        [InlineKeyboardButton(text="💼 Работать", callback_data=WORK)],
+        [InlineKeyboardButton(text="🛠 Улучшения", callback_data=UPGRADES),
+         InlineKeyboardButton(text="📊 Профиль", callback_data=PROFILE)],
+        [InlineKeyboardButton(text="👥 Купить раба", callback_data=BUY_MENU)],
+        [InlineKeyboardButton(text="🔗 Рефералка", callback_data=REF_LINK)]
     ])
 
 def upgrades_keyboard(user_id):
@@ -46,13 +57,26 @@ def upgrades_keyboard(user_id):
         buttons.append([
             InlineKeyboardButton(
                 text=f"{data['name']} (Ур. {level}) - {price} монет",
-                callback_data=f"buy_{upgrade_id}"
+                callback_data=f"{UPGRADE_PREFIX}{upgrade_id}"
             )
         ])
-    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# Обработчики
+def buy_slave_keyboard(user_id):
+    buttons = []
+    for uid, data in users.items():
+        if uid != user_id and data["owner"] != user_id and user_id not in data["slaves"]:
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"👤 ID:{uid} (Цена: {data['price']} монет)",
+                    callback_data=f"{SLAVE_PREFIX}{uid}"
+                )
+            ])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# Обработчики команд
 @dp.message(Command('start'))
 async def start_command(message: Message):
     user_id = message.from_user.id
@@ -60,7 +84,7 @@ async def start_command(message: Message):
     if not await check_subscription(user_id):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔔 Подписаться", url=CHANNEL_LINK)],
-            [InlineKeyboardButton(text="✅ Я подписался", callback_data=f"check_sub_{user_id}")]
+            [InlineKeyboardButton(text="✅ Я подписался", callback_data=f"{CHECK_SUB}{user_id}")]
         ])
         await message.answer("📌 Для доступа подпишитесь на канал:", reply_markup=kb)
         return
@@ -73,15 +97,16 @@ async def start_command(message: Message):
             "price": 100,
             "last_work": None,
             "upgrades": {key: 0 for key in upgrades},
-            "total_income": 0
+            "total_income": 0,
+            "username": message.from_user.username
         }
         await message.answer("🎮 Добро пожаловать в Slave Empire!", reply_markup=main_keyboard())
     else:
         await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
 
-@dp.callback_query(F.data.startswith("check_sub_"))
+@dp.callback_query(F.data.startswith(CHECK_SUB))
 async def check_sub_callback(callback: types.CallbackQuery):
-    user_id = int(callback.data.split("_")[-1])
+    user_id = int(callback.data.replace(CHECK_SUB, ""))
     if await check_subscription(user_id):
         if user_id not in users:
             users[user_id] = {
@@ -91,7 +116,8 @@ async def check_sub_callback(callback: types.CallbackQuery):
                 "price": 100,
                 "last_work": None,
                 "upgrades": {key: 0 for key in upgrades},
-                "total_income": 0
+                "total_income": 0,
+                "username": callback.from_user.username
             }
             await callback.message.edit_text("✅ Регистрация завершена!")
             await callback.message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
@@ -99,13 +125,13 @@ async def check_sub_callback(callback: types.CallbackQuery):
         await callback.answer("❌ Вы не подписаны!", show_alert=True)
     await callback.answer()
 
-@dp.callback_query(F.data == "work")
+@dp.callback_query(F.data == WORK)
 async def work_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     user = users.get(user_id)
     
     if not user:
-        await callback.answer("❌ Сначала зарегистрируйтесь!")
+        await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
         return
     
     now = datetime.now()
@@ -139,23 +165,23 @@ async def work_handler(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-@dp.callback_query(F.data == "upgrades")
+@dp.callback_query(F.data == UPGRADES)
 async def upgrades_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     if user_id not in users:
         await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
         return
     
-    await callback.message.edit_text( 
+    await callback.message.edit_text(
         "🛠 Улучшения увеличивают доход от работы:",
-        reply_markup=upgrades_keyboard(user_id)  
+        reply_markup=upgrades_keyboard(user_id)
     )
     await callback.answer()
 
-@dp.callback_query(F.data.startswith("buy_"))
+@dp.callback_query(F.data.startswith(UPGRADE_PREFIX))
 async def buy_upgrade(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    upgrade_id = callback.data.split("_")[1]
+    upgrade_id = callback.data.replace(UPGRADE_PREFIX, "")
     
     if upgrade_id not in upgrades:
         await callback.answer("❌ Улучшение не найдено", show_alert=True)
@@ -171,13 +197,13 @@ async def buy_upgrade(callback: types.CallbackQuery):
     users[user_id]["balance"] -= price
     users[user_id]["upgrades"][upgrade_id] += 1
     
-    await callback.message.edit_text(  
+    await callback.message.edit_text(
         f"🎉 {upgrades[upgrade_id]['name']} улучшено до уровня {users[user_id]['upgrades'][upgrade_id]}!",
-        reply_markup=upgrades_keyboard(user_id)  
+        reply_markup=upgrades_keyboard(user_id)
     )
     await callback.answer()
 
-@dp.callback_query(F.data == "profile")
+@dp.callback_query(F.data == PROFILE)
 async def profile_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     user = users.get(user_id)
@@ -186,10 +212,16 @@ async def profile_handler(callback: types.CallbackQuery):
         await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
         return
     
+    slaves_list = "\n".join([f"  ▪️ ID: {uid}" for uid in user["slaves"][:5]])  # Показываем первых 5 рабов
+    if len(user["slaves"]) > 5:
+        slaves_list += f"\n  ...и еще {len(user['slaves']) - 5}"
+    
     profile_text = (
-        f"👤 Профиль:\n"
+        f"👤 Ваш профиль:\n"
         f"💰 Баланс: {user['balance']} монет\n"
         f"🧷 Рабов: {len(user['slaves'])}\n"
+        f"{slaves_list}\n"
+        f"👑 Владелец: {user['owner'] or 'Отсутствует'}\n"
         f"📈 Всего заработано: {user['total_income']}\n"
         f"🛠 Улучшения: {sum(user['upgrades'].values())}"
     )
@@ -197,19 +229,7 @@ async def profile_handler(callback: types.CallbackQuery):
     await callback.message.edit_text(profile_text, reply_markup=main_keyboard())
     await callback.answer()
 
-def buy_slave_keyboard(user_id):
-    buttons = []
-    for uid, data in users.items():
-        if uid != user_id and data["owner"] != user_id and user_id not in data["slaves"]:
-            buttons.append([
-                InlineKeyboardButton(
-                    text=f"👤 {uid} (Цена: {data['price']} монет)",
-                    callback_data=f"buy_{uid}"
-                )
-            ])
-    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-@dp.callback_query(F.data == "ref_link")
+@dp.callback_query(F.data == REF_LINK)
 async def ref_link_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     if user_id not in users:
@@ -220,12 +240,15 @@ async def ref_link_handler(callback: types.CallbackQuery):
     await callback.message.edit_text(
         f"🔗 Ваша реферальная ссылка:\n<code>{ref_link}</code>\n\n"
         f"💎 За каждого приглашенного:\n"
-        f"+1 раб и 50 монет",
+        f"- Вы получаете +50 монет\n"
+        f"- Он становится вашим рабом\n"
+        f"- Ваш доход от /work увеличивается",
         reply_markup=main_keyboard(),
         parse_mode=ParseMode.HTML
     )
     await callback.answer()
-@dp.callback_query(F.data == "buy_menu")
+
+@dp.callback_query(F.data == BUY_MENU)
 async def buy_menu_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     if user_id not in users:
@@ -238,11 +261,12 @@ async def buy_menu_handler(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-@dp.callback_query(F.data.startswith("buy_"))
+@dp.callback_query(F.data.startswith(SLAVE_PREFIX))
 async def buy_slave_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    slave_id = int(callback.data.split("_")[1])
+    slave_id = int(callback.data.replace(SLAVE_PREFIX, ""))
     
+    # Проверки
     if slave_id not in users:
         await callback.answer("❌ Игрок не найден", show_alert=True)
         return
@@ -251,26 +275,31 @@ async def buy_slave_handler(callback: types.CallbackQuery):
         await callback.answer("🤡 Нельзя купить самого себя!", show_alert=True)
         return
     
-    slave_data = users[slave_id]
-    price = slave_data["price"]
+    if users[user_id]["owner"] == slave_id:
+        await callback.answer("👑 Нельзя купить своего владельца!", show_alert=True)
+        return
+    
+    slave = users[slave_id]
+    price = slave["price"]
     
     if users[user_id]["balance"] < price:
         await callback.answer(f"❌ Нужно ещё {price - users[user_id]['balance']} монет", show_alert=True)
         return
     
-    old_owner = slave_data["owner"]
+    # Совершаем сделку
+    old_owner = slave["owner"]
     if old_owner:
         users[old_owner]["balance"] += price
         users[old_owner]["slaves"].remove(slave_id)
     
     users[user_id]["balance"] -= price
     users[user_id]["slaves"].append(slave_id)
-    slave_data["owner"] = user_id
-    slave_data["price"] = int(price * 1.5)  # Повышаем цену
+    slave["owner"] = user_id
+    slave["price"] = int(price * 1.5)  # Повышаем цену
     
     await callback.message.edit_text(
-        f"🎉 Вы купили {slave_id} за {price} монет!\n"
-        f"Теперь его цена: {slave_data['price']} монет",
+        f"🎉 Вы купили раба {slave_id} за {price} монет!\n"
+        f"Теперь его цена: {slave['price']} монет",
         reply_markup=main_keyboard()
     )
     
@@ -284,11 +313,13 @@ async def buy_slave_handler(callback: types.CallbackQuery):
         pass
     
     await callback.answer()
-@dp.callback_query(F.data == "main_menu")
+
+@dp.callback_query(F.data == MAIN_MENU)
 async def main_menu_handler(callback: types.CallbackQuery):
     await callback.message.edit_text("🔮 Главное меню:", reply_markup=main_keyboard())
     await callback.answer()
 
+# Вспомогательные функции
 async def check_subscription(user_id: int):
     try:
         member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
@@ -298,7 +329,10 @@ async def check_subscription(user_id: int):
         return False
 
 async def main():
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    )
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
