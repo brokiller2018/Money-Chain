@@ -145,9 +145,10 @@ async def upgrades_handler(callback: types.CallbackQuery):
         await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
         return
     
-    await callback.message.edit_text(
+    await callback.message.edit_text( 
         "🛠 Улучшения увеличивают доход от работы:",
-        reply_markup=upgrades_keyboard(user_id)
+        reply_markup=upgrades_keyboard(user_id)  
+    )
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("buy_"))
@@ -169,9 +170,10 @@ async def buy_upgrade(callback: types.CallbackQuery):
     users[user_id]["balance"] -= price
     users[user_id]["upgrades"][upgrade_id] += 1
     
-    await callback.message.edit_text(
+    await callback.message.edit_text(  
         f"🎉 {upgrades[upgrade_id]['name']} улучшено до уровня {users[user_id]['upgrades'][upgrade_id]}!",
-        reply_markup=upgrades_keyboard(user_id)
+        reply_markup=upgrades_keyboard(user_id)  
+    )
     await callback.answer()
 
 @dp.callback_query(F.data == "profile")
