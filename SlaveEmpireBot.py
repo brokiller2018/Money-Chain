@@ -34,7 +34,7 @@ def main_keyboard():
         [InlineKeyboardButton(text="💼 Работать", callback_data="work")],
         [InlineKeyboardButton(text="🛠 Улучшения", callback_data="upgrades"),
          InlineKeyboardButton(text="📊 Профиль", callback_data="profile")],
-        [InlineKeyboardButton(text="👥 Купить раба", callback_data="buy_menu"),
+        [InlineKeyboardButton(text="👥 Купить раба", callback_data="buy_menu")],
         [InlineKeyboardButton(text="🔗 Рефералка", callback_data="ref_link")]
     ])
 
