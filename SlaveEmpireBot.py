@@ -274,7 +274,113 @@ async def process_username(message: Message):
         f"▸ Владелец: {owner_info}",
         reply_markup=kb
     )
+@dp.callback_query(F.data == UPGRADES)
+async def upgrades_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id not in users:
+        await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
+        return
+    await callback.message.edit_text("🛠 Выберите улучшение:", reply_markup=upgrades_keyboard(user_id))
+    await callback.answer()
 
+@dp.callback_query(F.data == REF_LINK)
+async def ref_link_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    ref_link = f"https://t.me/{(await bot.get_me()).username}?start={user_id}"
+    await callback.message.edit_text(
+        f"🔗 Ваша реферальная ссылка:\n<code>{ref_link}</code>\n\n"
+        "Приглашайте друзей и получайте 10% с их заработка!",
+        reply_markup=main_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == BUY_MENU)
+async def buy_menu_handler(callback: types.CallbackQuery):
+    await callback.message.edit_text("👥 Меню покупки рабов:", reply_markup=buy_menu_keyboard())
+    await callback.answer()
+
+@dp.callback_query(F.data == MAIN_MENU)
+async def main_menu_handler(callback: types.CallbackQuery):
+    await callback.message.edit_text("🔮 Главное меню:", reply_markup=main_keyboard())
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith(UPGRADE_PREFIX))
+async def upgrade_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    upgrade_id = callback.data.replace(UPGRADE_PREFIX, "")
+    
+    if user_id not in users:
+        await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
+        return
+    
+    user = users[user_id]
+    upgrade_data = upgrades.get(upgrade_id)
+    
+    if not upgrade_data:
+        await callback.answer("❌ Улучшение не найдено!", show_alert=True)
+        return
+    
+    current_level = user["upgrades"].get(upgrade_id, 0)
+    price = upgrade_data["base_price"] * (current_level + 1)
+    
+    if user["balance"] < price:
+        await callback.answer("❌ Недостаточно средств!", show_alert=True)
+        return
+    
+    user["balance"] -= price
+    user["upgrades"][upgrade_id] = current_level + 1
+    
+    # Обновляем пассивный доход если это склад
+    if upgrade_id == "storage":
+        user["income_per_sec"] = (1 + user["upgrades"]["storage"] * 10) / 60
+    
+    await callback.message.edit_reply_markup(reply_markup=upgrades_keyboard(user_id))
+    await callback.answer(f"✅ {upgrade_data['name']} улучшен до уровня {current_level + 1}!")
+
+@dp.callback_query(F.data.startswith(SLAVE_PREFIX))
+async def buy_slave_handler(callback: types.CallbackQuery):
+    buyer_id = callback.from_user.id
+    slave_id = int(callback.data.replace(SLAVE_PREFIX, ""))
+    
+    buyer = users.get(buyer_id)
+    slave = users.get(slave_id)
+    
+    if not buyer or not slave:
+        await callback.answer("❌ Ошибка: пользователь не найден", show_alert=True)
+        return
+    
+    if slave_id == buyer_id:
+        await callback.answer("❌ Нельзя купить самого себя!", show_alert=True)
+        return
+    
+    if slave["owner"] is not None:
+        owner = users.get(slave["owner"])
+        await callback.answer(
+            f"❌ Этот раб уже принадлежит @{owner.get('username', 'unknown')}",
+            show_alert=True
+        )
+        return
+    
+    price = slave["price"]
+    
+    if buyer["balance"] < price:
+        await callback.answer("❌ Недостаточно средств!", show_alert=True)
+        return
+    
+    # Совершаем покупку
+    buyer["balance"] -= price
+    buyer["slaves"].append(slave_id)
+    slave["owner"] = buyer_id
+    slave["price"] = int(price * 1.5)  # Увеличиваем цену
+    
+    # Обновляем сообщение
+    owner_info = f"@{buyer['username']}" if buyer["username"] else f"ID:{buyer_id}"
+    await callback.message.edit_text(
+        f"✅ Вы успешно купили @{slave['username']} за {price}₽!\n"
+        f"Новая цена раба: {slave['price']}₽",
+        reply_markup=main_keyboard()
+    )
+    await callback.answer()
 
 # Обновленный профиль
 @dp.callback_query(F.data == PROFILE)
