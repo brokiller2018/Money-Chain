@@ -1,13 +1,19 @@
 import logging
 import asyncio
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message
 from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 
 TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
-bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
+
+# Инициализация бота с новым синтаксисом
+bot = Bot(
+    token=TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
@@ -60,7 +66,7 @@ async def buy_command(message: Message):
         return
     
     user_id = message.from_user.id
-    slave_id = int(args[1].replace('@', ''))  # Симуляция ID из юзернейма (нужен реальный user_id)
+    slave_id = int(args[1].replace('@', ''))  # Симуляция ID из юзернейма
     
     if slave_id not in users or user_id not in users:
         await message.answer("Ошибка: пользователь не найден.")
