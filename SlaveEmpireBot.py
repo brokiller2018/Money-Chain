@@ -1219,7 +1219,8 @@ async def main():
         logger.info("Завершение работы...")
         await on_shutdown()
         logger.info("Бот успешно остановлен")
-
+users.clear()  # Очищает словарь
+print("Локальные данные стерты")
 if __name__ == "__main__":
     try:
         # Для Windows нужно установить специальный event loop
