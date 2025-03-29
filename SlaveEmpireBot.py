@@ -1015,7 +1015,7 @@ async def select_shackles(callback: types.CallbackQuery):
             
             await callback.message.edit_text(
                 "Выберите раба для применения кандал:",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
             await callback.answer()
             
     except Exception as e:
