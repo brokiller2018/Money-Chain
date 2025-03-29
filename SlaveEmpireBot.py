@@ -1125,33 +1125,35 @@ async def buyout_handler(callback: types.CallbackQuery):
         logging.error(f"Buyout error: {e}", exc_info=True)
         await callback.answer("🌀 Произошла ошибка при выкупе", show_alert=True)
 
-@dp.message(Command('top_user'))
-async def top_users_chat_handler(message: Message):
-    # Проверяем, что это именно команда, а не просто текст
-    if not message.text.startswith('/'):
-        return
-        
+@dp.message(Command("top_user"))
+async def handle_top_user_command(message: types.Message):
+    print(f"Получена команда /top_user от {message.from_user.id}")  # Логирование
+    
     try:
-        # Фильтруем только владельцев с рабами
-        owners = [u for u in users.values() if u.get('slaves')]
-        
-        if not owners:
-            await message.reply("😢 Пока нет рабовладельцев")
+        # Получаем топ-5 владельцев по количеству рабов
+        top_owners = sorted(
+            [u for u in users.values() if u.get('slaves')],
+            key=lambda x: len(x['slaves']),
+            reverse=True
+        )[:5]
+
+        if not top_owners:
+            await message.reply("😢 Пока нет ни одного рабовладельца")
             return
 
-        # Сортируем по количеству рабов
-        top = sorted(owners, key=lambda x: len(x['slaves']), reverse=True)[:5]
-        
-        # Формируем ответ
-        text = "🏆 <b>Топ рабовладельцев:</b>\n\n"
-        for i, user in enumerate(top, 1):
-            text += f"{i}. @{user.get('username', 'unknown')} - {len(user['slaves'])} рабов\n"
-            
-        await message.reply(text, parse_mode=ParseMode.HTML)
+        # Формируем текст ответа
+        response = ["🏆 <b>Топ рабовладельцев:</b>\n"]
+        for i, owner in enumerate(top_owners, 1):
+            response.append(
+                f"{i}. @{owner.get('username', 'unknown')} "
+                f"- {len(owner['slaves'])} рабов"
+            )
+
+        await message.reply("\n".join(response), parse_mode="HTML")
         
     except Exception as e:
-        logging.error(f"Ошибка в top_user: {e}")
-
+        print(f"Ошибка в /top_user: {e}")  # Логирование ошибки
+        await message.reply("⚠️ Произошла ошибка при формировании топа")
 # Обновленный профиль
 @dp.callback_query(F.data == PROFILE)
 async def profile_handler(callback: types.CallbackQuery):
