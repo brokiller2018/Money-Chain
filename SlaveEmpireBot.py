@@ -441,13 +441,65 @@ async def handle_top_user_command(message: types.Message):
 
 @dp.callback_query(F.data == "random_slaves")
 async def show_random_slaves(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    
-    # Фильтруем свободных рабов или чужих рабов (но не себя и не своих)
-    available_slaves = [
-        (uid, data) for uid, data in users.items() 
-        if uid != user_id and (data.get("owner") is None or data["owner"] != user_id)
-    ]
+    try:
+        user_id = callback.from_user.id
+        
+        # 1. Фильтрация доступных рабов
+        available_slaves = []
+        for slave_id, slave_data in users.items():
+            # Исключаем: себя, своих рабов, пользователей с активным щитом
+            if slave_id == user_id:
+                continue
+                
+            if user_id in slave_data.get('slaves', []):
+                continue
+                
+            shield_active = slave_data.get('shield_active')
+            if isinstance(shield_active, str):
+                try:
+                    shield_active = datetime.fromisoformat(shield_active)
+                except ValueError:
+                    shield_active = None
+                    
+            if shield_active and shield_active > datetime.now():
+                continue
+                
+            available_slaves.append((slave_id, slave_data))
+
+        # 2. Проверка минимального количества
+        if len(available_slaves) < MIN_SLAVES_FOR_RANDOM:
+            await callback.answer(
+                f"😢 Нужно минимум {MIN_SLAVES_FOR_RANDOM} доступных рабов",
+                show_alert=True
+            )
+            return
+
+        # 3. Выборка и сортировка
+        selected = random.sample(available_slaves, min(10, len(available_slaves)))
+        selected.sort(key=lambda x: x[1].get('price', 100))  # Сортировка по цене
+
+        # 4. Формирование кнопок
+        buttons = []
+        for slave_id, slave_data in selected:
+            buttons.append([
+                InlineKeyboardButton(
+                    text=f"👤 Ур.{slave_data.get('slave_level', 0)} @{slave_data['username']} - {slave_data['price']}₽",
+                    callback_data=f"{SLAVE_PREFIX}{slave_id}"
+                )
+            ])
+
+        buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)])
+
+        # 5. Отправка сообщения
+        await callback.message.edit_text(
+            "🎲 Доступные рабы (случайная выборка):",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+        )
+        await callback.answer()
+
+    except Exception as e:
+        logging.error(f"Ошибка в random_slaves: {e}", exc_info=True)
+        await callback.answer("⚠️ Ошибка при поиске рабов", show_alert=True)
     
     # Функция для расчета рейтинга
     def get_slave_score(slave_data):
