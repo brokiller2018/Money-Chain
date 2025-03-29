@@ -647,7 +647,7 @@ async def process_username(message: Message):
             f"▸ Уровень: {slave.get('slave_level', 0)}\n"
             f"▸ Цена: {slave['price']}₽\n"
             f"▸ Владелец: {owner_info}\n\n"
-            f"💡 <i>Доход от этого раба: {int(100 * (1 + 0.5 * slave.get('slave_level', 0))}₽ за цикл работы</i>",
+            f"💡 <i>Доход от этого раба: {int(100 * (1 + 0.5 * slave.get('slave_level', 0)))}₽ за цикл работы</i>",
             reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
