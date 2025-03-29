@@ -18,7 +18,8 @@ from datetime import datetime, timedelta
 TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
 CHANNEL_ID = "@memok_da"
 CHANNEL_LINK = "https://t.me/memok_da"
-
+users.clear()  # Очищает словарь
+print("Локальные данные стерты")
 # Константы
 UPGRADE_PREFIX = "upg_"
 SLAVE_PREFIX = "slv_"
