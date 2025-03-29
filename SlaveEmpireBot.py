@@ -1122,24 +1122,28 @@ async def profile_handler(callback: types.CallbackQuery):
             buyout_price = int((base_price + user["balance"] * 0.1) * (1 + user.get("slave_level", 0) * 0.5))
             buyout_price = max(100, min(10000, buyout_price))
         
+        # Получаем уровни улучшений
+        barracks_level = user.get("upgrades", {}).get("barracks", 0)
+        whip_level = user.get("upgrades", {}).get("whip", 0)
+        
         # Формируем текст профиля
         text = [
-            f" 👑 <b>Профиль @{user.get('username', 'unknown')}</b>",
+            f"👑 <b>Профиль @{user.get('username', 'unknown')}</b>",
             f"▸ 💰 Баланс: {user.get('balance', 0):.1f}₽",
             f"▸ 👥 Уровень раба: {user.get('slave_level', 0)}",
             f"▸ 🛠 Улучшения: {sum(user.get('upgrades', {}).values())}",
-            f"▸ Лимит рабов: {5 + 2*barracks_level}/{5 + 2*MAX_BARRACKS_LEVEL}"
-            f"▸ Налог: {10 + 2*whip_level}%"
+            f"▸ Лимит рабов: {5 + 2 * barracks_level} (макс. {5 + 2 * MAX_BARRACKS_LEVEL})",
+            f"▸ Налог: {10 + 2 * whip_level}%"
         ]
         
         if user.get("owner"):
             owner = users.get(user["owner"], {})
             text.append(
-                f"⚠️ <b>Налог рабства:</b> 30% дохода → @{owner.get('username', 'unknown')}\n"
+                f"\n⚠️ <b>Налог рабства:</b> 30% дохода → @{owner.get('username', 'unknown')}\n"
                 f"▸ Цена выкупа: {buyout_price}₽"
             )
         else:
-            text.append("🔗 Вы свободный человек")
+            text.append("\n🔗 Вы свободный человек")
             
         # Кнопка выкупа
         keyboard = []
