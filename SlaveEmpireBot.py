@@ -1,5 +1,7 @@
 import logging
 import asyncio
+import json
+import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
@@ -25,6 +27,7 @@ REF_LINK = "ref_link"
 BUY_MENU = "buy_menu"
 CHECK_SUB = "check_sub_"
 SEARCH_USER = "search_user"
+DB_FILE = "users_db.json"
 
 # Инициализация
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -96,7 +99,37 @@ def buy_menu_keyboard():
         [InlineKeyboardButton(text="🔍 Поиск по юзернейму", callback_data=SEARCH_USER)],
         [InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)]
     ])
+    
+def save_db():
+    with open(DB_FILE, 'w', encoding='utf-8') as f:
+        # Конвертируем datetime в строку для сохранения
+        db_to_save = {}
+        for user_id, user_data in users.items():
+            db_to_save[user_id] = {}
+            for key, value in user_data.items():
+                if isinstance(value, datetime):
+                    db_to_save[user_id][key] = value.isoformat()
+                else:
+                    db_to_save[user_id][key] = value
+        json.dump(db_to_save, f, ensure_ascii=False, indent=4)
 
+def load_db():
+    if not os.path.exists(DB_FILE):
+        return {}
+    
+    with open(DB_FILE, 'r', encoding='utf-8') as f:
+        db_loaded = json.load(f)
+        
+    # Восстанавливаем datetime объекты
+    restored_db = {}
+    for user_id, user_data in db_loaded.items():
+        restored_db[int(user_id)] = {}
+        for key, value in user_data.items():
+            if key in ['last_passive', 'last_work'] and value is not None:
+                restored_db[int(user_id)][key] = datetime.fromisoformat(value)
+            else:
+                restored_db[int(user_id)][key] = value
+    return restored_db
 
 # Вспомогательные функции
 async def check_subscription(user_id: int):
@@ -343,104 +376,123 @@ async def main_menu_handler(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith(UPGRADE_PREFIX))
 async def upgrade_handler(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    upgrade_id = callback.data.replace(UPGRADE_PREFIX, "")
-    
-    if user_id not in users:
-        await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
-        return
-    
-    user = users[user_id]
-    upgrade_data = upgrades.get(upgrade_id)
-    
-    if not upgrade_data:
-        await callback.answer("❌ Улучшение не найдено!", show_alert=True)
-        return
-    
-    current_level = user["upgrades"].get(upgrade_id, 0)
-    price = upgrade_data["base_price"] * (current_level + 1)
-    
-    if user["balance"] < price:
-        await callback.answer("❌ Недостаточно средств!", show_alert=True)
-        return
-    
-    user["balance"] -= price
-    user["upgrades"][upgrade_id] = current_level + 1
-    
-    # Обновляем пассивный доход если это склад
-    if upgrade_id == "storage":
-        user["income_per_sec"] = (1 + user["upgrades"]["storage"] * 10) / 60
-    
-    await callback.message.edit_reply_markup(reply_markup=upgrades_keyboard(user_id))
-    await callback.answer(f"✅ {upgrade_data['name']} улучшен до уровня {current_level + 1}!")
+    try:
+        user_id = callback.from_user.id
+        upgrade_id = callback.data.replace(UPGRADE_PREFIX, "")
+        
+        if user_id not in users:
+            await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
+            return
+
+        user = users[user_id]
+        upgrade_data = upgrades.get(upgrade_id)
+        
+        if not upgrade_data:
+            await callback.answer("❌ Улучшение не найдено!", show_alert=True)
+            return
+
+        current_level = user.get("upgrades", {}).get(upgrade_id, 0)
+        price = upgrade_data["base_price"] * (current_level + 1)
+        
+        if user.get("balance", 0) < price:
+            await callback.answer("❌ Недостаточно средств!", show_alert=True)
+            return
+
+        # Выполняем улучшение
+        user["balance"] -= price
+        user.setdefault("upgrades", {})[upgrade_id] = current_level + 1
+        
+        # Обновляем пассивный доход для склада
+        if upgrade_id == "storage":
+            user["income_per_sec"] = (1 + user["upgrades"].get("storage", 0) * 10) / 60
+
+        # Сохраняем изменения в БД
+        save_db()
+
+        # Обновляем клавиатуру
+        try:
+            await callback.message.edit_reply_markup(
+                reply_markup=upgrades_keyboard(user_id)
+            )
+            await callback.answer(f"✅ {upgrade_data['name']} улучшен до уровня {current_level + 1}!")
+        except Exception as e:
+            logging.error(f"Ошибка обновления клавиатуры: {str(e)}")
+            await callback.answer("✅ Улучшение применено!", show_alert=True)
+
+    except Exception as e:
+        logging.error(f"Ошибка в обработчике улучшений: {str(e)}", exc_info=True)
+        await callback.answer("❌ Произошла ошибка при улучшении", show_alert=True)
 
 @dp.callback_query(F.data.startswith(SLAVE_PREFIX))
 async def buy_slave_handler(callback: types.CallbackQuery):
-    buyer_id = callback.from_user.id
-    slave_id = int(callback.data.replace(SLAVE_PREFIX, ""))
-    
-    buyer = users.get(buyer_id)
-    slave = users.get(slave_id)
-    
-    if not buyer or not slave:
-        await callback.answer("❌ Ошибка: пользователь не найден", show_alert=True)
+    try:
+        buyer_id = callback.from_user.id
+        slave_id = int(callback.data.replace(SLAVE_PREFIX, ""))
+        
+        buyer = users.get(buyer_id)
+        slave = users.get(slave_id)
+        
+        if not buyer or not slave:
+            await callback.answer("❌ Ошибка: пользователь не найден", show_alert=True)
+            return
+
+        if slave_id == buyer_id:
+            await callback.answer("❌ Нельзя купить самого себя!", show_alert=True)
+            return
+
+        previous_owner_id = slave.get("owner")
+        previous_owner = users.get(previous_owner_id) if previous_owner_id else None
+
+        if previous_owner and previous_owner_id != buyer_id:
+            await callback.answer(
+                f"❌ Этот раб принадлежит @{previous_owner.get('username', 'unknown')}",
+                show_alert=True
+            )
+            return
+
+        price = slave.get("price", 100)
+        
+        if buyer["balance"] < price:
+            await callback.answer("❌ Недостаточно средств!", show_alert=True)
+            return
+
+        # Основная логика покупки
+        if previous_owner:
+            if slave_id in previous_owner.get("slaves", []):
+                previous_owner["slaves"].remove(slave_id)
+            commission = int(price * 0.1)
+            previous_owner["balance"] += commission
+            previous_owner["total_income"] += commission
+
+        buyer["balance"] -= price
+        buyer["total_income"] -= price
+        buyer.setdefault("slaves", []).append(slave_id)
+
+        slave["owner"] = buyer_id
+        slave["slave_level"] = slave.get("slave_level", 0) + 1
+        slave["price"] = int(slave.get("base_price", 100) * (1.5 ** slave["slave_level"]))
+
+        # Формирование сообщения
+        msg = [
+            f"✅ Вы купили @{slave.get('username', 'безымянный')} за {price}₽!",
+            f"▸ Уровень: {slave['slave_level']}",
+            f"▸ Новая цена: {slave['price']}₽"
+        ]
+        
+        if previous_owner:
+            msg.append(f"▸ Комиссия предыдущему владельцу: {commission}₽")
+
+        # Сохраняем изменения перед отправкой ответа
+        save_db()
+
+    except Exception as e:
+        logging.error(f"Ошибка при покупке раба: {str(e)}", exc_info=True)
+        await callback.answer("❌ Произошла ошибка при обработке запроса", show_alert=True)
         return
-    
-    if slave_id == buyer_id:
-        await callback.answer("❌ Нельзя купить самого себя!", show_alert=True)
-        return
-    
-    # Получаем текущего владельца
-    previous_owner_id = slave.get("owner")
-    previous_owner = users.get(previous_owner_id) if previous_owner_id else None
-    
-    # Если есть владелец и это не покупатель
-    if previous_owner and previous_owner_id != buyer_id:
-        await callback.answer(
-            f"❌ Этот раб принадлежит @{previous_owner.get('username', 'unknown')}",
-            show_alert=True
-        )
-        return
-    
-    price = slave.get("price", 100)
-    
-    if buyer["balance"] < price:
-        await callback.answer("❌ Недостаточно средств!", show_alert=True)
-        return
-    
-    # Если был предыдущий владелец (перепродажа)
-    if previous_owner:
-        # Удаляем раба из списка предыдущего владельца
-        if slave_id in previous_owner["slaves"]:
-            previous_owner["slaves"].remove(slave_id)
-        # Начисляем комиссию
-        commission = int(price * 0.1)
-        previous_owner["balance"] += commission
-        previous_owner["total_income"] += commission
-    
-    # Обновляем данные покупателя
-    buyer["balance"] -= price
-    buyer["total_income"] -= price  # Учет расходов
-    buyer["slaves"].append(slave_id)
-    
-    # Обновляем данные раба
-    slave["owner"] = buyer_id
-    slave["slave_level"] = slave.get("slave_level", 0) + 1
-    slave["price"] = int(slave["base_price"] * (1.5 ** slave["slave_level"]))
-    
-    # Формируем сообщение
-    msg = [
-        f"✅ Вы купили @{slave['username']} за {price}₽!",
-        f"▸ Уровень: {slave['slave_level']}",
-        f"▸ Новая цена: {slave['price']}₽"
-    ]
-    
-    if previous_owner:
-        msg.append(f"▸ Комиссия предыдущему владельцу: {commission}₽")
-    
+
+    # Отправка сообщения вне блока try-except
     await callback.message.edit_text("\n".join(msg), reply_markup=main_keyboard())
     await callback.answer()
-
 # Обновленный профиль
 @dp.callback_query(F.data == PROFILE)
 async def profile_handler(callback: types.CallbackQuery):
@@ -484,16 +536,65 @@ async def profile_handler(callback: types.CallbackQuery):
     await callback.message.edit_text(text, reply_markup=main_keyboard())
     await callback.answer()
 
+async def autosave_task():
+    while True:
+        await asyncio.sleep(300)  # 5 минут
+        save_db()
+        
 async def on_startup():
-    asyncio.create_task(passive_income_task())  # Теперь имя функции совпадает
+    global users
+    users = load_db()  # Загружаем БД при старте
+    asyncio.create_task(passive_income_task())
+    asyncio.create_task(autosave_task())
+    # Сохраняем БД при корректном завершении
+    import signal
+    import functools
+    def save_on_exit(*args):
+        save_db()
+    
+    signal.signal(signal.SIGTERM, save_on_exit)
+    signal.signal(signal.SIGINT, save_on_exit)
+    
+async def on_shutdown():
+    save_db() 
+
 
 async def main():
-    await on_startup()
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-    )
-    await dp.start_polling(bot)
+    try:
+        # Инициализация логирования (должна быть первой)
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+            handlers=[
+                logging.StreamHandler(),
+                logging.FileHandler("bot.log", encoding='utf-8')
+            ]
+        )
+        logger = logging.getLogger(__name__)
+        
+        logger.info("Запуск бота...")
+        
+        # Загрузка и инициализация
+        await on_startup()
+        
+        # Основной цикл бота
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Бот остановлен вручную")
+    except Exception as e:
+        logger.critical(f"Критическая ошибка: {str(e)}", exc_info=True)
+    finally:
+        logger.info("Завершение работы...")
+        await on_shutdown()
+        logger.info("Бот успешно остановлен")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        # Для Windows нужно установить специальный event loop
+        if os.name == 'nt':
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
