@@ -209,6 +209,7 @@ async def start_command(message: Message):
     "▸ 📈 Получай доход каждую минуту\n\n"
     "💰 <b>Базовая пассивка:</b> 1₽/мин"
 )
+        save_db() 
         
         await message.answer(welcome_msg, reply_markup=main_keyboard(), parse_mode=ParseMode.HTML)
     else:
@@ -231,6 +232,7 @@ async def check_sub_callback(callback: types.CallbackQuery):
                 "last_passive": datetime.now(),
                 "income_per_sec": 0.0167
             }
+        save_db() 
         await callback.message.edit_text("✅ Регистрация завершена!")
         await callback.message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
     else:
