@@ -487,7 +487,7 @@ async def show_random_slaves(callback: types.CallbackQuery):
         try:
             selected = random.sample(
                 available, 
-                min(10, len(available))
+                min(10, len(available)))
         except ValueError:
             selected = available
 
