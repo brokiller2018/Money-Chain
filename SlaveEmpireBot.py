@@ -235,6 +235,7 @@ async def start_command(message: Message):
     "💰 <b>Базовая пассивка:</b> 1₽/мин"
 )
         save_db() 
+        print(f"Путь к файлу: {os.path.abspath(DB_FILE)}")
         
         await message.answer(welcome_msg, reply_markup=main_keyboard(), parse_mode=ParseMode.HTML)
     else:
