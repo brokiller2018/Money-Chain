@@ -38,9 +38,8 @@ BUYOUT_PREFIX = "buyout_"
 SHIELD_PREFIX = "shield_"
 SHACKLES_PREFIX = "shackles_"
 MAX_SLAVE_LEVEL = 15
-DAILY_WORK_LIMIT = 10
 MAX_BARRACKS_LEVEL = 10
-DAILY_WORK_LIMIT = 7
+DAILY_WORK_LIMIT = 10
 MIN_SLAVES_FOR_RANDOM = 3 
 
 # Инициализация
@@ -119,6 +118,7 @@ def get_user(user_id: int) -> dict | None:
         return None
     finally:
         return_db_connection(conn)
+        
 def upgrades_keyboard(user_id):
     buttons = []
     user = get_user(user_id)  # Загружаем данные пользователя
@@ -163,6 +163,11 @@ def serialize_user_data(user_data: dict) -> dict:
         else:
             serialized[key] = value
     return serialized
+    
+def slave_level(slave_id: int) -> int:
+    """Возвращает уровень раба по его ID."""
+    slave = get_user(slave_id)
+    return slave.get("slave_level", 0) if slave else 0
 
 def deserialize_user_data(data: dict) -> dict:
     """Восстанавливаем datetime из строк"""
@@ -201,7 +206,7 @@ def create_user(user_id: int, username: str, referrer_id: int = None) -> dict:
         "shop_purchases": 0,
         "last_passive": datetime.now(),
         "income_per_sec": 0.0167,
-        "referrer": referrer_id,
+        "referrer": referrer_id
     }
     
     conn = get_db_connection()
@@ -217,7 +222,7 @@ def create_user(user_id: int, username: str, referrer_id: int = None) -> dict:
         logging.error(f"Ошибка создания пользователя {user_id}: {e}")
         raise
     finally:
-        conn.close()
+        return_db_connection(conn) 
 
 def update_user(user_id: int, user_data: dict):
     """Обновляет данные пользователя в PostgreSQL"""
