@@ -452,11 +452,16 @@ async def profile_handler(callback: types.CallbackQuery):
     slaves_count = len(user.get("slaves", []))
     max_slaves = 5 + user.get("upgrades", {}).get("barracks", 0) * 5
     income_per_sec = (1 + user.get("upgrades", {}).get("storage", 0) * 10) / 60
+     passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 10
+    passive_per_min += sum(
+        100 * (1 + 0.3 * users[slave_id].get("slave_level", 0))
+        for slave_id in user["slaves"]
+    )
     
     text = (
         f"👑 <b>Профиль @{user.get('username', 'unknown')}</b>\n\n"
         f"▸ 💰 Баланс: {user.get('balance', 0):.1f}₽\n"
-        f"▸ ⚡ Доход/сек: {income_per_sec:.3f}₽\n"
+        f"▸ ⚡ Доход/мин: {passive_per_min:.1f}₽\n"
         f"▸ 👥 Рабы: {slaves_count}/{max_slaves}\n"
         f"▸ 🛠 Улучшения: {sum(user.get('upgrades', {}).values())}\n"
         f"▸ 📈 Всего заработано: {user.get('total_income', 0):.1f}₽\n\n"
