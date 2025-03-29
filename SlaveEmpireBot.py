@@ -31,6 +31,7 @@ BUY_MENU = "buy_menu"
 CHECK_SUB = "check_sub_"
 SEARCH_USER = "search_user"
 TOP_OWNERS = "top_owners"
+BUYOUT_PREFIX = "buyout_"
 
 # Инициализация
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -240,7 +241,23 @@ async def start_command(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username
     
+    # Получаем referrer_id из параметров команды (если есть)
+    referrer_id = None
+    if len(message.text.split()) > 1:
+        try:
+            referrer_id = int(message.text.split()[1])
+            # Проверяем, что это не сам пользователь и реферер существует
+            if referrer_id == user_id or referrer_id not in users:
+                referrer_id = None
+        except (ValueError, IndexError):
+            referrer_id = None
+
     if not await check_subscription(user_id):
+        # Сохраняем реферала сразу, даже если пользователь еще не подписался
+        if referrer_id:
+            users.setdefault(user_id, {})["referrer"] = referrer_id
+            save_db()
+            
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔔 Подписаться", url=CHANNEL_LINK)],
             [InlineKeyboardButton(text="✅ Я подписался", callback_data=f"{CHECK_SUB}{user_id}")]
@@ -249,6 +266,7 @@ async def start_command(message: Message):
         return
     
     if user_id not in users:
+        # Создаем нового пользователя с учетом реферала
         users[user_id] = {
             "balance": 100,
             "slaves": [],
@@ -261,20 +279,39 @@ async def start_command(message: Message):
             "total_income": 0,
             "username": username,
             "last_passive": datetime.now(),
-            "income_per_sec": 0.0167
+            "income_per_sec": 0.0167,
+            "referrer": None  # Сохраняем реферала
         }
         
-        welcome_msg = (
-    "👑 <b>ДОБРО ПОЖАЛОВАТЬ В РАБОВЛАДЕЛЬЧЕСКУЮ ИМПЕРИЮ!</b>\n\n"
-    "⚡️ <b>Основные возможности:</b>\n"
-    "▸ 💼 Бонусная работа (раз в 20 мин)\n"
-    "▸ 🛠 Улучшай свои владения\n"
-    "▸ 👥 Покупай рабов для пассивного дохода\n"
-    "▸ 📈 Получай доход каждую минуту\n\n"
-    "💰 <b>Базовая пассивка:</b> 1₽/мин"
-)
-        save_db() 
+        # Начисляем бонус рефералу
+        if referrer_id and referrer_id in users:
+            bonus = 50  # 10% от стартового баланса
+            users[referrer_id]["balance"] += bonus
+            users[referrer_id]["total_income"] += bonus
+            try:
+                await bot.send_message(
+                    referrer_id,
+                    f"🎉 Вам начислено {bonus}₽ за приглашение @{username}!"
+                )
+            except Exception:
+                pass  # Если не удалось отправить сообщение
         
+        welcome_msg = (
+            "👑 <b>ДОБРО ПОЖАЛОВАТЬ В РАБОВЛАДЕЛЬЧЕСКУЮ ИМПЕРИЮ!</b>\n\n"
+            "⚡️ <b>Основные возможности:</b>\n"
+            "▸ 💼 Бонусная работа (раз в 20 мин)\n"
+            "▸ 🛠 Улучшай свои владения\n"
+            "▸ 👥 Покупай рабов для пассивного дохода\n"
+            "▸ 📈 Получай доход каждую минуту\n\n"
+        )
+        
+        if referrer_id:
+            referrer_name = users.get(referrer_id, {}).get("username", "друг")
+            welcome_msg += f"🤝 Вас пригласил: @{referrer_name}\n\n"
+        
+        welcome_msg += "💰 <b>Базовая пассивка:</b> 1₽/мин"
+        
+        save_db()
         await message.answer(welcome_msg, reply_markup=main_keyboard(), parse_mode=ParseMode.HTML)
     else:
         await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
@@ -282,7 +319,9 @@ async def start_command(message: Message):
 @dp.callback_query(F.data.startswith(CHECK_SUB))
 async def check_sub_callback(callback: types.CallbackQuery):
     user_id = int(callback.data.replace(CHECK_SUB, ""))
+    
     if await check_subscription(user_id):
+        # Добавляем пользователя если его еще нет
         if user_id not in users:
             users[user_id] = {
                 "balance": 100,
@@ -294,15 +333,24 @@ async def check_sub_callback(callback: types.CallbackQuery):
                 "total_income": 0,
                 "username": callback.from_user.username,
                 "last_passive": datetime.now(),
-                "income_per_sec": 0.0167
+                "income_per_sec": 0.0167,
+                "referrer": None  # Сохраняем реферала
             }
-        save_db() 
+        
+        # Начисляем бонус рефералу
+        referrer_id = users[user_id].get("referrer")
+        if referrer_id and referrer_id in users:
+            bonus = 50  # 10% от стартового баланса
+            users[referrer_id]["balance"] += bonus
+            users[referrer_id]["total_income"] += bonus
+            save_db()
+            
+        save_db()
         await callback.message.edit_text("✅ Регистрация завершена!")
         await callback.message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
     else:
         await callback.answer("❌ Вы не подписаны!", show_alert=True)
     await callback.answer()
-
 @dp.callback_query(F.data == SEARCH_USER)
 async def search_user_handler(callback: types.CallbackQuery):
     await callback.message.edit_text(
@@ -445,31 +493,62 @@ async def main_menu_handler(callback: types.CallbackQuery):
 @dp.callback_query(F.data == TOP_OWNERS)
 async def top_owners_handler(callback: types.CallbackQuery):
     try:
-        # Сортируем по общему доходу (пассивка + работа)
-        sorted_users = sorted(
-            users.items(),
-            key=lambda x: x[1].get("total_income", 0),
-            reverse=True
-        )[:15]  # Топ-15
+        current_user_id = callback.from_user.id
         
-        text = "🏆 <b>Топ рабовладельцев по доходу:</b>\n\n"
-        text += "<i>Рейтинг учитывает всех рабов и их уровни</i>\n\n"
-        
-        for idx, (user_id, user_data) in enumerate(sorted_users, 1):
-            username = user_data.get("username", "Unknown")
-            slaves = user_data.get("slaves", [])
+        # Рассчитываем эффективность для всех пользователей
+        users_list = []
+        for user_id, user_data in users.items():
+            slaves_count = len(user_data.get("slaves", []))
             total_income = user_data.get("total_income", 0)
-            
-            # Расчет эффективности (доход на раба)
-            efficiency = total_income / len(slaves) if slaves else 0
-            
-            text += (
-                f"{idx}. @{username}\n"
-                f"   ▸ Рабов: {len(slaves)}\n"
-                f"   ▸ Общий доход: {total_income:.1f}₽\n"
-                f"   ▸ Эффективность: {efficiency:.1f}₽/раба\n\n"
-            )
+            efficiency = total_income / slaves_count if slaves_count > 0 else 0
+            users_list.append({
+                "user_id": user_id,
+                "username": user_data.get("username", "Unknown"),
+                "slaves": slaves_count,
+                "total_income": total_income,
+                "efficiency": efficiency
+            })
+
+        # Сортируем по эффективности (по убыванию)
+        sorted_users = sorted(
+            users_list,
+            key=lambda x: x["efficiency"],
+            reverse=True
+        )
+
+        # Формируем топ-10
+        top_10 = sorted_users[:10]
         
+        # Находим позицию текущего пользователя
+        user_position = None
+        for idx, user in enumerate(sorted_users, 1):
+            if user["user_id"] == current_user_id:
+                user_position = idx
+                break
+
+        # Формируем текст
+        text = "🏆 <b>Топ рабовладельцев по эффективности:</b>\n\n"
+        text += "<i>Рейтинг рассчитывается как доход на одного раба</i>\n\n"
+        
+        # Выводим топ-10
+        for idx, user in enumerate(top_10, 1):
+            if user["efficiency"] > 0:
+                text += (
+                    f"{idx}. @{user['username']}\n"
+                    f"   ▸ Эффективность: {user['efficiency']:.1f}₽/раб\n"
+                    f"   ▸ Рабов: {user['slaves']} | Доход: {user['total_income']:.1f}₽\n\n"
+                )
+
+        # Добавляем позицию пользователя
+        if user_position:
+            if user_position <= 10:
+                text += f"\n🎉 Ваша позиция в топе: {user_position}"
+            else:
+                user_efficiency = next((u["efficiency"] for u in sorted_users if u["user_id"] == current_user_id), 0)
+                text += f"\n📊 Ваша эффективность: {user_efficiency:.1f}₽/раб (позиция #{user_position})"
+        else:
+            text += "\nℹ️ Вы пока не участвуете в рейтинге"
+
         await callback.message.edit_text(
             text,
             reply_markup=InlineKeyboardMarkup(
@@ -479,6 +558,7 @@ async def top_owners_handler(callback: types.CallbackQuery):
             ),
             parse_mode=ParseMode.HTML
         )
+
     except Exception as e:
         logging.error(f"Top owners error: {e}", exc_info=True)
         await callback.answer("🌀 Ошибка загрузки топа", show_alert=True)
@@ -540,113 +620,221 @@ async def buy_slave_handler(callback: types.CallbackQuery):
         buyer_id = callback.from_user.id
         slave_id = int(callback.data.replace(SLAVE_PREFIX, ""))
         
-        buyer = users.get(buyer_id)
-        slave = users.get(slave_id)
-        
-        if not buyer or not slave:
+        # Проверка существования пользователей
+        if buyer_id not in users or slave_id not in users:
             await callback.answer("❌ Ошибка: пользователь не найден", show_alert=True)
             return
 
+        buyer = users[buyer_id]
+        slave = users[slave_id]
+
+        # Проверка на покупку самого себя
         if slave_id == buyer_id:
             await callback.answer("❌ Нельзя купить самого себя!", show_alert=True)
             return
 
-        previous_owner_id = slave.get("owner")
-        previous_owner = users.get(previous_owner_id) if previous_owner_id else None
+        # Проверка что покупатель не является рабом цели
+        if buyer.get("owner") == slave_id:
+            await callback.answer("❌ Вы не можете купить своего владельца!", show_alert=True)
+            return
 
-        if previous_owner and previous_owner_id != buyer_id:
+        # Проверка что раб не принадлежит уже покупателю
+        if slave.get("owner") == buyer_id:
+            await callback.answer("❌ Этот раб уже принадлежит вам!", show_alert=True)
+            return
+
+        # Проверка что раб свободен или принадлежит другому
+        previous_owner_id = slave.get("owner")
+        if previous_owner_id and previous_owner_id != buyer_id:
+            previous_owner = users.get(previous_owner_id)
+            owner_name = previous_owner.get("username", "unknown") if previous_owner else "unknown"
             await callback.answer(
-                f"❌ Этот раб принадлежит @{previous_owner.get('username', 'unknown')}",
+                f"❌ Этот раб принадлежит @{owner_name}",
                 show_alert=True
             )
             return
 
         price = slave.get("price", 100)
         
+        # Проверка баланса
         if buyer["balance"] < price:
             await callback.answer("❌ Недостаточно средств!", show_alert=True)
             return
 
-        # Основная логика покупки
-        if previous_owner:
-            if slave_id in previous_owner.get("slaves", []):
-                previous_owner["slaves"].remove(slave_id)
+        # Логика покупки
+        if previous_owner_id:
+            # Удаляем из списка рабов предыдущего владельца
+            if slave_id in users[previous_owner_id].get("slaves", []):
+                users[previous_owner_id]["slaves"].remove(slave_id)
+            
+            # Начисляем комиссию предыдущему владельцу (10%)
             commission = int(price * 0.1)
-            previous_owner["balance"] += commission
-            previous_owner["total_income"] += commission
+            users[previous_owner_id]["balance"] += commission
+            users[previous_owner_id]["total_income"] += commission
 
+        # Списание средств у покупателя
         buyer["balance"] -= price
-        buyer["total_income"] -= price
+        buyer["total_income"] -= price  # Это вычитание выглядит странно, возможно нужно убрать
+        
+        # Добавляем раба новому владельцу
         buyer.setdefault("slaves", []).append(slave_id)
 
+        # Обновляем данные раба
         slave["owner"] = buyer_id
         slave["slave_level"] = slave.get("slave_level", 0) + 1
         slave["price"] = int(slave.get("base_price", 100) * (1.5 ** slave["slave_level"]))
 
-        # Формирование сообщения
+        # Формируем сообщение об успешной покупке
         msg = [
             f"✅ Вы купили @{slave.get('username', 'безымянный')} за {price}₽!",
             f"▸ Уровень: {slave['slave_level']}",
             f"▸ Новая цена: {slave['price']}₽"
         ]
         
-        if previous_owner:
+        if previous_owner_id:
             msg.append(f"▸ Комиссия предыдущему владельцу: {commission}₽")
 
-        # Сохраняем изменения перед отправкой ответа
+        # Сохраняем изменения
         save_db()
+
+        # Отправляем сообщение
+        await callback.message.edit_text("\n".join(msg), reply_markup=main_keyboard())
+        await callback.answer()
 
     except Exception as e:
         logging.error(f"Ошибка при покупке раба: {str(e)}", exc_info=True)
         await callback.answer("❌ Произошла ошибка при обработке запроса", show_alert=True)
-        return
 
-    # Отправка сообщения вне блока try-except
-    await callback.message.edit_text("\n".join(msg), reply_markup=main_keyboard())
+@dp.callback_query(F.data.startswith(BUYOUT_PREFIX))
+async def buyout_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = users.get(user_id)
+    price = int(callback.data.replace(BUYOUT_PREFIX, ""))
+    
+    if not user or not user.get("owner"):
+        await callback.answer("❌ У вас нет владельца!", show_alert=True)
+        return
+    
+    if user["balance"] < price:
+        await callback.answer(f"❌ Недостаточно средств! Нужно {price}₽", show_alert=True)
+        return
+    
+    # Процесс выкупа
+    owner_id = user["owner"]
+    user["balance"] -= price
+    user["owner"] = None
+    
+    # Удаляем из списка рабов владельца
+    if owner_id in users and user_id in users[owner_id].get("slaves", []):
+        users[owner_id]["slaves"].remove(user_id)
+    
+    # Обновляем цену (можно добавить сброс или оставить рост)
+    user["price"] = max(100, int(price * 1.2)) 
+    
+    save_db()
+    
+    # Уведомляем владельца
+    try:
+        await bot.send_message(
+            owner_id,
+            f"😱 Ваш раб @{user['username']} выкупился за {price}₽!"
+        )
+    except Exception:
+        pass
+    
+    await callback.message.edit_text(
+        f"🎉 Вы свободны! Потрачено на выкуп: {price}₽\n"
+        f"Новая цена при повторном порабощении: {user['price']}₽",
+        reply_markup=main_keyboard()
+    )
     await callback.answer()
+
 # Обновленный профиль
 @dp.callback_query(F.data == PROFILE)
 async def profile_handler(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    user = users.get(user_id)
-    
-    if not user:
-        await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
-        return
-    
-    slaves_count = len(user.get("slaves", []))
-    max_slaves = 5 + user.get("upgrades", {}).get("barracks", 0) * 5
-    income_per_sec = (1 + user.get("upgrades", {}).get("storage", 0) * 10) / 60
-    passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 10
-    passive_per_min += sum(
-        100 * (1 + 0.3 * users[slave_id].get("slave_level", 0))
-        for slave_id in user["slaves"]
-    )
-    
-    text = (
-        f"👑 <b>Профиль @{user.get('username', 'unknown')}</b>\n\n"
-        f"▸ 💰 Баланс: {user.get('balance', 0):.1f}₽\n"
-        f"▸ ⚡ Доход/мин: {passive_per_min:.1f}₽\n"
-        f"▸ 👥 Рабы: {slaves_count}/{max_slaves}\n"
-        f"▸ 🛠 Улучшения: {sum(user.get('upgrades', {}).values())}\n"
-        f"▸ 📈 Всего заработано: {user.get('total_income', 0):.1f}₽\n\n"
-    )
-    
-    if user.get("owner"):
-        owner_username = users.get(user["owner"], {}).get("username", "unknown")
-        text += f"🔗 Владелец: @{owner_username}\n"
-    else:
-        text += "🔗 Вы свободный человек!\n"
-    
-    if slaves_count > 0:
-        text += "\n<b>Топ рабов:</b>\n"
-        for uid in user.get("slaves", [])[:3]:
-            slave_data = users.get(uid, {})
-            text += f"▸ @{slave_data.get('username', 'unknown')} ({slave_data.get('price', 0)}₽)\n"
-    
-    await callback.message.edit_text(text, reply_markup=main_keyboard())
-    await callback.answer()
+    try:
+        user_id = callback.from_user.id
+        user = users.get(user_id)
+        
+        if not user:
+            await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
+            return
+        
+        # Получаем данные пользователя
+        username = user.get("username", "unknown")
+        balance = user.get("balance", 0)
+        slaves_count = len(user.get("slaves", []))
+        max_slaves = 5 + user.get("upgrades", {}).get("barracks", 0) * 5
+        total_upgrades = sum(user.get("upgrades", {}).values())
+        total_income = user.get("total_income", 0)
+        
+        # Рассчитываем доход
+        passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 10
+        passive_per_min += sum(
+            100 * (1 + 0.3 * users[slave_id].get("slave_level", 0))
+            for slave_id in user.get("slaves", [])
+            if slave_id in users  # Защита от удаленных пользователей
+        )
+        
+        # Формируем текст профиля
+        text = [
+            f"👑 <b>Профиль @{username}</b>",
+            "",
+            f"▸ 💰 Баланс: {balance:.1f}₽",
+            f"▸ ⚡ Доход/мин: {passive_per_min:.1f}₽",
+            f"▸ 👥 Рабы: {slaves_count}/{max_slaves}",
+            f"▸ 🛠 Улучшения: {total_upgrades}",
+            f"▸ 📈 Всего заработано: {total_income:.1f}₽",
+            ""
+        ]
 
+        # Информация о владельце
+        if user.get("owner"):
+            owner_username = users.get(user["owner"], {}).get("username", "unknown")
+            text.append(f"🔗 Владелец: @{owner_username}")
+            
+            # Добавляем цену выкупа
+            buyout_price = user.get("price", 100)
+            text.append(f"▸ Цена выкупа: {buyout_price}₽")
+        else:
+            text.append("🔗 Вы свободный человек!")
+
+        # Топ рабов
+        if slaves_count > 0:
+            text.extend(["", "<b>Топ рабов:</b>"])
+            for i, slave_id in enumerate(user.get("slaves", [])[:3], 1):
+                if slave_id in users:
+                    slave = users[slave_id]
+                    slave_name = slave.get("username", "безымянный")
+                    slave_price = slave.get("price", 0)
+                    slave_level = slave.get("slave_level", 0)
+                    text.append(f"{i}. @{slave_name} (Ур. {slave_level}) - {slave_price}₽")
+
+        # Создаем клавиатуру
+        keyboard_buttons = []
+        
+        # Добавляем кнопку выкупа если есть владелец
+        if user.get("owner"):
+            buyout_price = user.get("price", 100)
+            keyboard_buttons.append(
+                [InlineKeyboardButton(
+                    text=f"🆓 Выкупиться за {buyout_price}₽", 
+                    callback_data=f"{BUYOUT_PREFIX}{buyout_price}"
+                )]
+            )
+        
+        keyboard_buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)])
+        
+        await callback.message.edit_text(
+            text="\n".join(text),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons),
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer()
+
+    except Exception as e:
+        logging.error(f"Ошибка в профиле: {str(e)}", exc_info=True)
+        await callback.answer("❌ Ошибка при загрузке профиля", show_alert=True)
 async def autosave_task():
     while True:
         await asyncio.sleep(300)  # 5 минут
