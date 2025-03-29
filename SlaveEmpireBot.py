@@ -124,23 +124,40 @@ def save_db():
             logging.error(f"Ошибка при установке прав на файл {DB_FILE}: {e}")
 
 def load_db():
+    # Если файла нет - создаем пустой с правильными правами
     if not os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, 'w', encoding='utf-8') as f:
+                json.dump({}, f, ensure_ascii=False, indent=4)
+            os.chmod(DB_FILE, 0o644)  # Права: владелец - чтение/запись, остальные - только чтение
+            return {}
+        except Exception as e:
+            logging.error(f"Ошибка при создании файла БД: {e}")
+            return {}
+
+    # Чтение существующей БД
+    try:
+        with open(DB_FILE, 'r', encoding='utf-8') as f:
+            db_loaded = json.load(f)
+    except Exception as e:
+        logging.error(f"Ошибка чтения БД: {e}")
         return {}
-    
-    with open(DB_FILE, 'r', encoding='utf-8') as f:
-        db_loaded = json.load(f)
-        
+
     # Восстанавливаем datetime объекты
     restored_db = {}
     for user_id, user_data in db_loaded.items():
-        restored_db[int(user_id)] = {}
-        for key, value in user_data.items():
-            if key in ['last_passive', 'last_work'] and value is not None:
-                restored_db[int(user_id)][key] = datetime.fromisoformat(value)
-            else:
-                restored_db[int(user_id)][key] = value
-    return restored_db
+        try:
+            restored_db[int(user_id)] = {}
+            for key, value in user_data.items():
+                if key in ['last_passive', 'last_work'] and value is not None:
+                    restored_db[int(user_id)][key] = datetime.fromisoformat(value)
+                else:
+                    restored_db[int(user_id)][key] = value
+        except Exception as e:
+            logging.error(f"Ошибка обработки пользователя {user_id}: {e}")
+            continue
 
+    return restored_db
 # Вспомогательные функции
 async def check_subscription(user_id: int):
     try:
