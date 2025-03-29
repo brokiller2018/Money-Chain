@@ -97,6 +97,33 @@ def buy_menu_keyboard():
         [InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)]
     ])
 
+def get_public_profile(target_user_id: int) -> str:
+    user = users.get(target_user_id)
+    if not user:
+        return "❌ Пользователь не найден"
+    
+    slaves_count = len(user.get("slaves", []))
+    max_slaves = 5 + user.get("upgrades", {}).get("barracks", 0) * 5
+    
+    text = (
+        f"👤 <b>Профиль @{user.get('username', 'unknown')}</b>\n\n"
+        f"▸ 👥 Рабы: {slaves_count}/{max_slaves}\n"
+        f"▸ 🛠 Улучшения: {sum(user.get('upgrades', {}).values())}\n"
+    )
+    
+    if user.get("owner"):
+        owner_username = users.get(user["owner"], {}).get("username", "unknown")
+        text += f"▸ Владелец: @{owner_username}\n"
+    else:
+        text += "▸ Свободный человек\n"
+    
+    if slaves_count > 0:
+        text += "\n<b>Топ рабов:</b>\n"
+        for uid in user.get("slaves", [])[:3]:
+            slave_data = users.get(uid, {})
+            text += f"▸ @{slave_data.get('username', 'unknown')} ({slave_data.get('price', 0)}₽)\n"
+    
+    return text
 # Вспомогательные функции
 async def check_subscription(user_id: int):
     try:
@@ -347,71 +374,101 @@ async def buy_slave_handler(callback: types.CallbackQuery):
     buyer = users.get(buyer_id)
     slave = users.get(slave_id)
     
-    # Проверка существования пользователей
     if not buyer or not slave:
         await callback.answer("❌ Ошибка: пользователь не найден", show_alert=True)
         return
     
-    # Проверка на самопокупку
     if slave_id == buyer_id:
         await callback.answer("❌ Нельзя купить самого себя!", show_alert=True)
         return
     
-    # Проверка текущего владельца
-    previous_owner = None
-    if slave["owner"] is not None:
-        previous_owner = users.get(slave["owner"])
-        if previous_owner:
-            await callback.answer(
-                f"❌ Этот раб уже принадлежит @{previous_owner.get('username', 'unknown')}",
-                show_alert=True
-            )
-            return
+    # Получаем текущего владельца
+    previous_owner_id = slave.get("owner")
+    previous_owner = users.get(previous_owner_id) if previous_owner_id else None
     
-    # Проверка баланса
+    # Если есть владелец и это не покупатель
+    if previous_owner and previous_owner_id != buyer_id:
+        await callback.answer(
+            f"❌ Этот раб принадлежит @{previous_owner.get('username', 'unknown')}",
+            show_alert=True
+        )
+        return
+    
     price = slave.get("price", 100)
+    
     if buyer["balance"] < price:
         await callback.answer("❌ Недостаточно средств!", show_alert=True)
         return
     
-    # Выплата предыдущему владельцу
+    # Если был предыдущий владелец (перепродажа)
     if previous_owner:
+        # Удаляем раба из списка предыдущего владельца
+        if slave_id in previous_owner["slaves"]:
+            previous_owner["slaves"].remove(slave_id)
+        # Начисляем комиссию
         commission = int(price * 0.1)
         previous_owner["balance"] += commission
         previous_owner["total_income"] += commission
     
-    # Обновление данных покупателя
+    # Обновляем данные покупателя
     buyer["balance"] -= price
-    buyer["total_income"] -= price  # Учитываем расходы
-    
-    # Если раб уже был в списке у предыдущего владельца
-    if previous_owner and slave_id in previous_owner["slaves"]:
-        previous_owner["slaves"].remove(slave_id)
-    
+    buyer["total_income"] -= price  # Учет расходов
     buyer["slaves"].append(slave_id)
     
-    # Обновление данных раба
+    # Обновляем данные раба
     slave["owner"] = buyer_id
-    slave.setdefault("base_price", 100)  # Защита от отсутствия базовой цены
     slave["slave_level"] = slave.get("slave_level", 0) + 1
     slave["price"] = int(slave["base_price"] * (1.5 ** slave["slave_level"]))
     
-    # Формирование сообщения
-    message_text = (
-        f"✅ Вы успешно купили @{slave['username']} за {price}₽!\n"
-        f"▸ Уровень раба: {slave['slave_level']}\n"
+    # Формируем сообщение
+    msg = [
+        f"✅ Вы купили @{slave['username']} за {price}₽!",
+        f"▸ Уровень: {slave['slave_level']}",
         f"▸ Новая цена: {slave['price']}₽"
-    )
+    ]
     
     if previous_owner:
-        message_text += f"\n▸ Предыдущий владелец получил {commission}₽ комиссии"
+        msg.append(f"▸ Комиссия предыдущему владельцу: {commission}₽")
     
-    await callback.message.edit_text(
-        message_text,
-        reply_markup=main_keyboard()
-    )
+    await callback.message.edit_text("\n".join(msg), reply_markup=main_keyboard())
     await callback.answer()
+
+@dp.message(F.text.startswith("@"))
+async def view_profile_by_username(message: Message):
+    username = message.text[1:].strip().lower()
+    caller_id = message.from_user.id
     
+    # Проверяем подписку
+    if not await check_subscription(caller_id):
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔔 Подписаться", url=CHANNEL_LINK)],
+            [InlineKeyboardButton(text="✅ Я подписался", callback_data=f"{CHECK_SUB}{caller_id}")]
+        ])
+        await message.answer("📌 Для просмотра профилей подпишитесь на канал:", reply_markup=kb)
+        return
+    
+    # Ищем пользователя
+    target_user = None
+    for uid, data in users.items():
+        if data.get("username", "").lower() == username:
+            target_user = uid
+            break
+    
+    if not target_user:
+        await message.reply("❌ Пользователь не найден")
+        return
+    
+    # Если смотрим свой профиль - перенаправляем на стандартный обработчик
+    if target_user == caller_id:
+        await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
+        return
+    
+    text = get_public_profile(target_user)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 В главное меню", callback_data=MAIN_MENU)]
+    ])
+    
+    await message.reply(text, reply_markup=kb)
 # Обновленный профиль
 @dp.callback_query(F.data == PROFILE)
 async def profile_handler(callback: types.CallbackQuery):
