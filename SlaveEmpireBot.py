@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import psycopg2
+import random
 from psycopg2.extras import Json
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
