@@ -454,7 +454,7 @@ async def profile_handler(callback: types.CallbackQuery):
     slaves_count = len(user.get("slaves", []))
     max_slaves = 5 + user.get("upgrades", {}).get("barracks", 0) * 5
     income_per_sec = (1 + user.get("upgrades", {}).get("storage", 0) * 10) / 60
-     passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 10
+    passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 10
     passive_per_min += sum(
         100 * (1 + 0.3 * users[slave_id].get("slave_level", 0))
         for slave_id in user["slaves"]
