@@ -109,16 +109,31 @@ async def check_subscription(user_id: int):
 
 async def passive_income_task():
     while True:
-        await asyncio.sleep(60) 
+        await asyncio.sleep(60)
         now = datetime.now()
         for user_id, user in users.items():
             if "last_passive" in user:
+                # Рассчитываем пассивный доход
                 mins_passed = (now - user["last_passive"]).total_seconds() / 60
-                if mins_passed >= 1:
-                    income = (1 + user.get("upgrades", {}).get("storage", 0) * 10) * mins_passed
-                    user["balance"] += income
-                    user["last_passive"] = now
-                    user["total_income"] += income
+                
+                # Базовый пассивный доход
+                base_income = 1 * mins_passed
+                
+                # Доход от улучшения "Склад"
+                storage_income = user.get("upgrades", {}).get("storage", 0) * 10 * mins_passed
+                
+                # Доход от рабов
+                slaves_income = sum(
+                    100 * (1 + 0.3 * users[slave_id].get("slave_level", 0)) * mins_passed
+                    for slave_id in user["slaves"]
+                )
+                
+                # Общий доход
+                total_income = (base_income + storage_income + slaves_income)
+                
+                user["balance"] += total_income
+                user["total_income"] += total_income
+                user["last_passive"] = now
             
 
 # Обработчики команд
@@ -140,8 +155,8 @@ async def start_command(message: Message):
             "balance": 100,
             "slaves": [],
             "owner": None,
-            "base_price": 100,  
-            "slave_level": 0,    
+            "base_price": 100,
+            "slave_level": 0,
             "price": 100,
             "last_work": None,
             "upgrades": {key: 0 for key in upgrades},
@@ -151,19 +166,17 @@ async def start_command(message: Message):
             "income_per_sec": 0.0167
         }
         
-        welcome_msg = """
-🎮 <b>ДОБРО ПОЖАЛОВАТЬ В РАБОВЛАДЕЛЬЧЕСКУЮ ИМПЕРИЮ!</b> 👑
-
-⚡️ <b>Основные возможности:</b>
-▸ 💼 Зарабатывай монеты работой (каждые 20 мин)
-▸ 🛠 Улучшай свои владения
-▸ 👥 Покупай других игроков
-▸ 📈 Получай пассивный доход (1₽/мин)
-
-💰 <b>Доход в секунду:</b> 0.016₽
-        """
+        welcome_msg = (
+    "👑 <b>ДОБРО ПОЖАЛОВАТЬ В РАБОВЛАДЕЛЬЧЕСКУЮ ИМПЕРИЮ!</b>\n\n"
+    "⚡️ <b>Основные возможности:</b>\n"
+    "▸ 💼 Бонусная работа (раз в 20 мин)\n"
+    "▸ 🛠 Улучшай свои владения\n"
+    "▸ 👥 Покупай рабов для пассивного дохода\n"
+    "▸ 📈 Получай доход каждую минуту\n\n"
+    "💰 <b>Базовая пассивка:</b> 1₽/мин"
+)
         
-        await message.answer(welcome_msg, reply_markup=main_keyboard())
+        await message.answer(welcome_msg, reply_markup=main_keyboard(), parse_mode=ParseMode.HTML)
     else:
         await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
 
@@ -221,24 +234,23 @@ async def work_handler(callback: types.CallbackQuery):
         await callback.answer(f"⏳ Подождите еще {remaining} минут", show_alert=True)
         return
     
-    base_income = 50
-    slaves_income = len(user["slaves"]) * 100
-    upgrades_bonus = sum(
-        user.get("upgrades", {}).get(upgrade, 0) * data["income_bonus"]
-        for upgrade, data in upgrades.items()
-    )
+    # Бонус = 20 минутный пассивный доход * множитель
+    passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 10
+    passive_per_min += sum(
+        100 * (1 + 0.3 * users[slave_id].get("slave_level", 0))
+        for slave_id in user["slaves"]
+    ) / 60  # Переводим в минуту
     
-    total_income = base_income + slaves_income + upgrades_bonus
-    user["balance"] += total_income
+    work_bonus = passive_per_min * 20 * (1 + user.get("upgrades", {}).get("whip", 0) * 0.25)
+    
+    user["balance"] += work_bonus
+    user["total_income"] += work_bonus
     user["last_work"] = now
-    user["total_income"] += total_income
     
     await callback.message.edit_text(
-        f"💼 Заработано: {total_income}₽\n\n"
-        f"📊 Разбивка:\n"
-        f"• База: {base_income}₽\n"
-        f"• Рабы: {slaves_income}₽\n"
-        f"• Улучшения: {upgrades_bonus}₽",
+        f"💼 Бонусная работа принесла: {work_bonus:.1f}₽\n"
+        f"▸ Это эквивалент 20 минут пассивки!\n"
+        f"▸ Ваш текущий пассив/мин: {passive_per_min:.1f}₽",
         reply_markup=main_keyboard()
     )
     await callback.answer()
