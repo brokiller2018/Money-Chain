@@ -576,77 +576,86 @@ async def work_handler(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-@dp.callback_query(F.data == PROFILE)
-async def profile_handler(callback: types.CallbackQuery):
+@dp.message(
+    F.text & 
+    F.text.startswith('@') &
+    (F.chat.type == "private")  # Только ЛС
+)
+async def process_username(message: Message):
     try:
-        user_id = callback.from_user.id
-        user = users.get(user_id)
+        # Нормализация username (удаляем @ и лишние пробелы)
+        username = message.text.strip().lower().replace('@', '')
         
-        if not user:
-            await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
-            return
-        
-        # Рассчитываем цену выкупа
-        buyout_price = 0
-        if user.get("owner"):
-            base_price = user.get("base_price", 100)
-            buyout_price = int((base_price + user["balance"] * 0.1) * (1 + user.get("slave_level", 0) * 0.5))
-            buyout_price = max(100, min(10000, buyout_price))
-        
-        # Рассчитываем пассивный доход в минуту
-        passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 10  # Базовый доход + склад
-        
-        # Добавляем доход от рабов (с учетом их уровня)
-        for slave_id in user.get("slaves", []):
-            if slave_id in users:
-                slave_level = users[slave_id].get("slave_level", 0)
-                passive_per_min += 100 * (1 + 0.3 * slave_level) / 60  # Переводим доход в минуты
-        
-        # Получаем уровни улучшений
-        barracks_level = user.get("upgrades", {}).get("barracks", 0)
-        whip_level = user.get("upgrades", {}).get("whip", 0)
-        
-        # Формируем текст профиля
-        text = [
-            f"👑 <b>Профиль @{user.get('username', 'unknown')}</b>",
-            f"▸ 💰 Баланс: {user.get('balance', 0):.1f}₽",
-            f"▸ 📊 Пассивный доход: {passive_per_min:.1f}₽/мин",
-            f"▸ 👥 Уровень раба: {user.get('slave_level', 0)}",
-            f"▸ 🛠 Улучшения: {sum(user.get('upgrades', {}).values())}",
-            f"▸ 🏠 Лимит рабов: {5 + 2 * barracks_level}/{5 + 2 * MAX_BARRACKS_LEVEL}",
-            f"▸ ⛓ Налог: {10 + 2 * whip_level}%"
-        ]
-        
-        if user.get("owner"):
-            owner = users.get(user["owner"], {})
-            text.append(
-                f"\n⚠️ <b>Налог рабства:</b> 30% дохода → @{owner.get('username', 'unknown')}\n"
-                f"▸ Цена выкупа: {buyout_price}₽"
+        # Поиск пользователя
+        found_user = None
+        for uid, data in users.items():
+            if data.get("username", "").lower() == username:
+                found_user = uid
+                break
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]
+        ])
+
+        if not found_user:
+            await message.reply(
+                "❌ Игрок не найден. Проверьте:\n"
+                "1. Правильность написания\n"
+                "2. Игрок должен быть зарегистрирован в боте",
+                reply_markup=kb
             )
-        else:
-            text.append("\n🔗 Вы свободный человек")
-            
-        # Кнопка выкупа
-        keyboard = []
-        if user.get("owner"):
-            keyboard.append([
-                InlineKeyboardButton(
-                    text=f"🆓 Выкупиться за {buyout_price}₽",
-                    callback_data=f"{BUYOUT_PREFIX}{buyout_price}"
-                )
-            ])
-        keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)])
+            return
+
+        buyer_id = message.from_user.id
+        if found_user == buyer_id:
+            await message.reply("🌀 Нельзя купить самого себя!", reply_markup=kb)
+            return
+
+        slave = users[found_user]
         
-        await callback.message.edit_text(
-            "\n".join(text),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        # Проверка щита защиты
+        shield_active = slave.get("shield_active")
+        if isinstance(shield_active, str):
+            try:
+                shield_active = datetime.fromisoformat(shield_active)
+            except ValueError:
+                shield_active = None
+
+        if shield_active and shield_active > datetime.now():
+            shield_time = shield_active.strftime("%d.%m %H:%M")
+            await message.reply(
+                f"🛡 Цель защищена щитом до {shield_time}",
+                reply_markup=kb
+            )
+            return
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"💰 Купить за {slave['price']}₽ (Ур. {slave.get('slave_level', 0)})", 
+                    callback_data=f"{SLAVE_PREFIX}{found_user}"
+                )
+            ],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]
+        ])
+
+        owner_info = f"@{users[slave['owner']]['username']}" if slave.get('owner') else "Свободен"
+        
+        await message.reply(
+            f"🔎 <b>Найден раб:</b>\n"
+            f"▸ Ник: @{slave['username']}\n"
+            f"▸ Уровень: {slave.get('slave_level', 0)}\n"
+            f"▸ Цена: {slave['price']}₽\n"
+            f"▸ Владелец: {owner_info}\n\n"
+            f"💡 <i>Доход от этого раба: {int(100 * (1 + 0.5 * slave.get('slave_level', 0))}₽ за цикл работы</i>",
+            reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
-        await callback.answer()
-        
+
     except Exception as e:
-        logging.error(f"Ошибка профиля: {e}", exc_info=True)
-        await callback.answer("❌ Ошибка загрузки профиля", show_alert=True)
+        logging.error(f"Ошибка поиска: {e}")
+        await message.reply("⚠️ Произошла ошибка при поиске")
+
 @dp.callback_query(F.data == UPGRADES)
 async def upgrades_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
