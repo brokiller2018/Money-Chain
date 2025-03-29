@@ -1,9 +1,9 @@
-# commands.py (Part 1/5)
 import logging
 import asyncio
+import json
 import os
-from datetime import datetime, timedelta
-import asyncpg
+import psycopg2
+from psycopg2.extras import Json
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
@@ -11,6 +11,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram import F
+from datetime import datetime, timedelta
+
 
 # Настройки
 TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
@@ -38,83 +40,38 @@ bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Улучшения (полный перебаланс)
+# База данных
+users = {}
+user_search_cache = {}
+
+# Улучшения
 upgrades = {
     "storage": {
         "name": "📦 Склад",
-        "base_price": 300,
-        "income_bonus": 5,
-        "description": "+5 монет/мин к пассивному доходу",
-        "multiplier": 1.4
+        "base_price": 500,
+        "income_bonus": 10,
+        "description": "+10 монет/мин к пассивному доходу"
     },
     "whip": {
         "name": "⛓ Кнуты", 
-        "base_price": 800,
-        "income_bonus": 20,
-        "description": "+20% к доходу от работы",
-        "multiplier": 1.5
+        "base_price": 1000,
+        "income_bonus": 25,
+        "description": "+25% к доходу от работы"
     },
     "food": {
         "name": "🍗 Еда",
-        "base_price": 1500,
-        "income_bonus": 30,
-        "description": "-15% к времени ожидания работы",
-        "multiplier": 1.6
+        "base_price": 2000,
+        "income_bonus": 50,
+        "description": "-10% к времени ожидания работы"
     },
     "barracks": {
         "name": "🏠 Бараки",
-        "base_price": 4000,
-        "income_bonus": 50,
-        "description": "+3 к лимиту рабов",
-        "multiplier": 2.0
+        "base_price": 5000,
+        "income_bonus": 100,
+        "description": "+5 к лимиту рабов"
     }
 }
 
-# Подключение к PostgreSQL
-async def get_db():
-    return await asyncpg.connect(os.getenv("DATABASE_URL"))
-
-# Сериализация/десериализация
-def serialize_user_data(user_data: dict) -> dict:
-    return {
-        k: v.isoformat() if isinstance(v, datetime) else v
-        for k, v in user_data.items()
-    }
-
-def deserialize_user_data(data: dict) -> dict:
-    return {
-        k: datetime.fromisoformat(v) if k in ['last_passive', 'last_work'] and v else v
-        for k, v in data.items()
-    }
-
-# Основные операции с БД
-async def get_user(user_id: int) -> dict:
-    async with await get_db() as conn:
-        data = await conn.fetchval(
-            "SELECT data FROM bot_users WHERE user_id = $1", 
-            user_id
-        )
-        return deserialize_user_data(data) if data else None
-
-async def update_user(user_id: int, data: dict):
-    async with await get_db() as conn:
-        await conn.execute(
-            "INSERT INTO bot_users (user_id, data) VALUES ($1, $2) "
-            "ON CONFLICT (user_id) DO UPDATE SET data = $2, last_updated = NOW()",
-            user_id, 
-            serialize_user_data(data)
-        )
-
-async def init_db():
-    async with await get_db() as conn:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS bot_users (
-                user_id BIGINT PRIMARY KEY,
-                data JSONB NOT NULL,
-                last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-            )
-        """)
-        # commands.py (Part 2/5)
 # Клавиатуры
 def main_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -133,12 +90,14 @@ def main_keyboard():
         ]
     ])
 
-async def upgrades_keyboard(user_id: int):
-    user = await get_user(user_id)
+def get_db_connection():
+    return psycopg2.connect(os.getenv("DATABASE_URL"))
+    
+def upgrades_keyboard(user_id):
     buttons = []
     for upgrade_id, data in upgrades.items():
-        level = user.get("upgrades", {}).get(upgrade_id, 0)
-        price = int(data["base_price"] * (data["multiplier"] ** level))
+        level = users[user_id].get("upgrades", {}).get(upgrade_id, 0)
+        price = data["base_price"] * (level + 1)
         buttons.append([
             InlineKeyboardButton(
                 text=f"{data['name']} (Ур. {level}) - {price}₽ | {data['description']}",
@@ -148,11 +107,181 @@ async def upgrades_keyboard(user_id: int):
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-async def buy_menu_keyboard():
+def buy_menu_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔍 Поиск по юзернейму", callback_data=SEARCH_USER)],
         [InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)]
     ])
+
+def serialize_user_data(user_data: dict) -> dict:
+    """Преобразуем datetime объекты в строки для JSON"""
+    serialized = {}
+    for key, value in user_data.items():
+        if isinstance(value, datetime):
+            serialized[key] = value.isoformat()
+        else:
+            serialized[key] = value
+    return serialized
+
+def deserialize_user_data(data: dict) -> dict:
+    """Восстанавливаем datetime из строк"""
+    deserialized = {}
+    for key, value in data.items():
+        if key in ['last_passive', 'last_work'] and value:
+            try:
+                deserialized[key] = datetime.fromisoformat(value)
+            except (TypeError, ValueError):
+                deserialized[key] = datetime.now()
+        else:
+            deserialized[key] = value
+    return deserialized
+
+def save_db():
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS bot_users (
+                        user_id BIGINT PRIMARY KEY,
+                        data JSONB NOT NULL,
+                        last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    )
+                """)
+                
+                # Сериализуем данные перед сохранением
+                for user_id, user_data in users.items():
+                    serialized_data = serialize_user_data(user_data)
+                    cur.execute("""
+                        INSERT INTO bot_users (user_id, data)
+                        VALUES (%s, %s)
+                        ON CONFLICT (user_id) 
+                        DO UPDATE SET 
+                            data = EXCLUDED.data,
+                            last_updated = NOW()
+                    """, (user_id, Json(serialized_data)))
+        
+    except psycopg2.Error as e:
+        logging.error(f"Database error in save_db: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()
+
+
+def load_db():
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'bot_users'
+                    )
+                """)
+                table_exists = cur.fetchone()[0]
+                
+                if not table_exists:
+                    return {}
+                
+                cur.execute("SELECT user_id, data FROM bot_users")
+                rows = cur.fetchall()
+                
+                loaded_users = {}
+                for user_id, data in rows:
+                    # Десериализуем данные при загрузке
+                    loaded_users[user_id] = deserialize_user_data(data)
+                
+                return loaded_users
+                
+    except psycopg2.Error as e:
+        logging.error(f"Database error in load_db: {e}")
+        return {}
+    finally:
+        if conn:
+            conn.close()
+
+def calculate_shield_price(user_id):
+    user = users[user_id]
+    # Базовый доход (1 + склад) в минуту
+    passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 10
+    # Доход от рабов в минуту
+    passive_per_min += sum(
+        100 * (1 + 0.3 * users[slave_id].get("slave_level", 0))
+        for slave_id in user.get("slaves", [])
+        if slave_id in users
+    )
+    # Цена = 50% дохода за 12 часов, округлено до 10
+    price = round((passive_per_min * 60 * 12 * 0.5) / 10) * 10
+    # Ограничения
+    price = max(300, min(5000, price))
+    # Скидка за первую покупку
+    if user.get("shop_purchases", 0) == 0:
+        price = int(price * 0.7)
+    return price
+
+def calculate_shackles_price(owner_id):
+    owner = users[owner_id]
+    
+    # 1. Считаем пассивный доход владельца в час
+    passive_income = (
+        1 + owner.get("upgrades", {}).get("storage", 0) * 10  # Склад
+    ) * 60  # В час
+    
+    # 2. Добавляем доход от всех рабов
+    for slave_id in owner.get("slaves", []):
+        if slave_id in users:
+            slave = users[slave_id]
+            passive_income += 100 * (1 + 0.3 * slave.get("slave_level", 0))
+    
+    # 3. Цена = 150% от часового дохода, округлено до 100
+    price = int(passive_income * 1.5 / 100) * 100
+    
+    # 4. Ограничиваем диапазон (300–10 000₽)
+    return max(300, min(10_000, price))
+
+# Вспомогательные функции
+async def check_subscription(user_id: int):
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        return member.status not in ['left', 'kicked']
+    except Exception as e:
+        logging.error(f"Ошибка проверки подписки: {e}")
+        return False
+
+async def passive_income_task():
+    while True:
+        await asyncio.sleep(60)
+        now = datetime.now()
+        for user_id, user in users.items():
+            if "last_passive" in user:
+                mins_passed = (now - user["last_passive"]).total_seconds() / 60
+                
+                # Базовый доход
+                base_income = 1 * mins_passed
+                
+                # Доход от склада
+                storage_income = user.get("upgrades", {}).get("storage", 0) * 10 * mins_passed
+                
+                # Доход от рабов (с налогом 20%)
+                slaves_income = 0
+                for slave_id in user.get("slaves", []):
+                    if slave_id in users:
+                        slave = users[slave_id]
+                        slave_income = 100 * (1 + 0.3 * slave.get("slave_level", 0)) * mins_passed
+                        tax = int(slave_income * 0.2)  # Налог 20%
+                        slave["balance"] += slave_income - tax
+                        slaves_income += tax  # Налог идёт владельцу
+                
+                total_income = base_income + storage_income + slaves_income
+                user["balance"] += total_income
+                user["total_income"] += total_income
+                user["last_passive"] = now
+        save_db()
+            
 
 # Обработчики команд
 @dp.message(Command('start'))
@@ -160,351 +289,360 @@ async def start_command(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username
     
-    # Проверка подписки
+    # Получаем referrer_id из параметров команды (если есть)
+    referrer_id = None
+    if len(message.text.split()) > 1:
+        try:
+            referrer_id = int(message.text.split()[1])
+            # Проверяем, что это не сам пользователь и реферер существует
+            if referrer_id == user_id or referrer_id not in users:
+                referrer_id = None
+        except (ValueError, IndexError):
+            referrer_id = None
+
     if not await check_subscription(user_id):
+        # Сохраняем реферала сразу, даже если пользователь еще не подписался
+        if referrer_id:
+            users.setdefault(user_id, {})["referrer"] = referrer_id
+            save_db()
+            
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔔 Подписаться", url=CHANNEL_LINK)],
             [InlineKeyboardButton(text="✅ Я подписался", callback_data=f"{CHECK_SUB}{user_id}")]
         ])
         await message.answer("📌 Для доступа подпишитесь на канал:", reply_markup=kb)
         return
-
-    user = await get_user(user_id)
-    if not user:
-        # Создание нового пользователя
-        new_user = {
-            "balance": 150,  # Увеличен стартовый баланс
+    
+    if user_id not in users:
+        # Создаем нового пользователя с учетом реферала
+        users[user_id] = {
+            "balance": 100,
             "slaves": [],
             "owner": None,
-            "base_price": 150,
+            "base_price": 100,
             "enslaved_date": None,
             "slave_level": 0,
-            "price": 150,
+            "price": 100,
             "last_work": None,
             "upgrades": {key: 0 for key in upgrades},
             "total_income": 0,
             "username": username,
-            "shield_active": None,
-            "shackles": {},
-            "shop_purchases": 0,
+            "shield_active": None,  # Время окончания щита
+            "shackles": {},  # {slave_id: end_time}
+            "shop_purchases": 0,  # Счетчик покупок за день
             "last_passive": datetime.now(),
-            "referrer": None
+            "income_per_sec": 0.0167,
+            "referrer": None  # Сохраняем реферала
         }
-        await update_user(user_id, new_user)
         
-        # Реферальная система
-        if len(message.text.split()) > 1:
+        # Начисляем бонус рефералу
+        if referrer_id and referrer_id in users:
+            bonus = 50  # 10% от стартового баланса
+            users[referrer_id]["balance"] += bonus
+            users[referrer_id]["total_income"] += bonus
             try:
-                referrer_id = int(message.text.split()[1])
-                if referrer_id != user_id and await get_user(referrer_id):
-                    new_user["referrer"] = referrer_id
-                    referrer = await get_user(referrer_id)
-                    referrer["balance"] += 75  # Увеличен реферальный бонус
-                    await update_user(referrer_id, referrer)
-            except: pass
-
+                await bot.send_message(
+                    referrer_id,
+                    f"🎉 Вам начислено {bonus}₽ за приглашение @{username}!"
+                )
+            except Exception:
+                pass  # Если не удалось отправить сообщение
+        
         welcome_msg = (
             "👑 <b>ДОБРО ПОЖАЛОВАТЬ В РАБОВЛАДЕЛЬЧЕСКУЮ ИМПЕРИЮ!</b>\n\n"
             "⚡️ <b>Основные возможности:</b>\n"
-            "▸ 💼 Бонусная работа (раз в 15 мин)\n"  # Уменьшено время ожидания
+            "▸ 💼 Бонусная работа (раз в 20 мин)\n"
             "▸ 🛠 Улучшай свои владения\n"
             "▸ 👥 Покупай рабов для пассивного дохода\n"
             "▸ 📈 Получай доход каждую минуту\n\n"
-            "💰 <b>Стартовый баланс:</b> 150₽"
         )
-        await message.answer(welcome_msg, reply_markup=main_keyboard())
+        
+        if referrer_id:
+            referrer_name = users.get(referrer_id, {}).get("username", "друг")
+            welcome_msg += f"🤝 Вас пригласил: @{referrer_name}\n\n"
+        
+        welcome_msg += "💰 <b>Базовая пассивка:</b> 1₽/мин"
+        
+        save_db()
+        await message.answer(welcome_msg, reply_markup=main_keyboard(), parse_mode=ParseMode.HTML)
     else:
         await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
 
 @dp.callback_query(F.data.startswith(CHECK_SUB))
 async def check_sub_callback(callback: types.CallbackQuery):
     user_id = int(callback.data.replace(CHECK_SUB, ""))
+    
     if await check_subscription(user_id):
-        user = await get_user(user_id) or {}
-        if not user:
-            new_user = {
-                "balance": 150,
+        # Добавляем пользователя если его еще нет
+        if user_id not in users:
+            users[user_id] = {
+                "balance": 100,
                 "slaves": [],
                 "owner": None,
-                "base_price": 150,
-                "enslaved_date": None,
-                "slave_level": 0,
-                "price": 150,
+                "price": 100,
                 "last_work": None,
-                "upgrades": {
-                    "storage": 0,
-                    "whip": 0,
-                    "food": 0,
-                    "barracks": 0
-                },
+                "upgrades": {key: 0 for key in upgrades},
                 "total_income": 0,
                 "username": callback.from_user.username,
-                "shield_active": None,
-                "shackles": {},
-                "shop_purchases": 0,
                 "last_passive": datetime.now(),
-                "referrer": None
+                "income_per_sec": 0.0167,
+                "referrer": None  # Сохраняем реферала
             }
-            await update_user(user_id, new_user)
+        
+        # Начисляем бонус рефералу
+        referrer_id = users[user_id].get("referrer")
+        if referrer_id and referrer_id in users:
+            bonus = 50  # 10% от стартового баланса
+            users[referrer_id]["balance"] += bonus
+            users[referrer_id]["total_income"] += bonus
+            save_db()
+            
+        save_db()
         await callback.message.edit_text("✅ Регистрация завершена!")
         await callback.message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
     else:
         await callback.answer("❌ Вы не подписаны!", show_alert=True)
+    await callback.answer()
+@dp.callback_query(F.data == SEARCH_USER)
+async def search_user_handler(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "🔍 Введите @username игрока (можно с собакой):\n"
+        "Пример: <code>@username123</code> или просто <code>username123</code>",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 В меню покупок", callback_data=BUY_MENU)]
+            ]
+        ),
+        parse_mode=ParseMode.HTML
+    )
+    await callback.answer()
+    
 
 @dp.callback_query(F.data == WORK)
 async def work_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    user = await get_user(user_id)
+    user = users.get(user_id)
     
     if not user:
         await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
         return
     
-    # Новый баланс: уменьшено время перезарядки до 15 минут
-    cooldown = timedelta(minutes=15)
-    if user["last_work"] and (datetime.now() - user["last_work"]) < cooldown:
-        remaining = (user["last_work"] + cooldown - datetime.now()).seconds // 60
+    now = datetime.now()
+    cooldown = timedelta(minutes=20)
+    
+    if user["last_work"] and (now - user["last_work"]) < cooldown:
+        remaining = (user["last_work"] + cooldown - now).seconds // 60
         await callback.answer(f"⏳ Подождите еще {remaining} минут", show_alert=True)
         return
     
-    # Пересчитанный доход с учетом балансировки
-    passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 5
-    for slave_id in user.get("slaves", []):
-        slave = await get_user(slave_id)
-        if slave:
-            passive_per_min += 80 * (1 + 0.25 * slave.get("slave_level", 0))  # Уменьшен доход от рабов
+    # Рассчитываем текущий пассивный доход в минуту
+    passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 10
+    passive_per_min += sum(
+        100 * (1 + 0.3 * users[slave_id].get("slave_level", 0))
+        for slave_id in user.get("slaves", [])
+        if slave_id in users
+    ) / 60
     
-    work_bonus = passive_per_min * 15 * (1 + user.get("upgrades", {}).get("whip", 0) * 0.2)
+    # Бонус = 20 минут пассивного дохода * множитель кнутов
+    whip_bonus = 1 + user.get("upgrades", {}).get("whip", 0) * 0.25
+    work_bonus = passive_per_min * 20 * whip_bonus
+    
     user["balance"] += work_bonus
     user["total_income"] += work_bonus
-    user["last_work"] = datetime.now()
+    user["last_work"] = now
     
-    await update_user(user_id, user)
     await callback.message.edit_text(
-        f"💼 Вы заработали: {work_bonus:.1f}₽\n"
-        f"▸ Текущий пассив/мин: {passive_per_min:.1f}₽",
+        f"💼 Бонусная работа принесла: {work_bonus:.1f}₽\n"
+        f"▸ Это эквивалент 20 минут пассивки!\n"
+        f"▸ Ваш текущий пассив/мин: {passive_per_min:.1f}₽",
         reply_markup=main_keyboard()
-    )
-    # commands.py (Part 3/5)
-@dp.callback_query(F.data == SEARCH_USER)
-async def search_user_handler(callback: types.CallbackQuery):
-    await callback.message.edit_text(
-        "🔍 Введите @username игрока (можно без @):\n"
-        "Пример: <code>username123</code>",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]]
-        ),
-        parse_mode=ParseMode.HTML
     )
     await callback.answer()
 
 @dp.message(F.text & ~F.text.startswith('/'))
 async def process_username(message: Message):
+    # Нормализация username (удаляем @ и лишние пробелы)
     username = message.text.strip().lower().replace('@', '')
     
-    # Поиск по базе данных
-    found_user_id = None
-    async with await get_db() as conn:
-        users = await conn.fetch("SELECT user_id, data FROM bot_users")
-        for record in users:
-            user_data = deserialize_user_data(record['data'])
-            if user_data.get('username', '').lower() == username:
-                found_user_id = record['user_id']
-                break
+    # Поиск пользователя
+    found_user = None
+    for uid, data in users.items():
+        if data.get("username", "").lower() == username:
+            found_user = uid
+            break
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]
     ])
 
-    if not found_user_id:
-        await message.reply("❌ Игрок не найден!", reply_markup=kb)
+    if not found_user:
+        await message.reply(
+            "❌ Игрок не найден. Проверьте:\n"
+            "1. Правильность написания\n"
+            "2. Игрок должен быть зарегистрирован в боте",
+            reply_markup=kb
+        )
         return
 
     buyer_id = message.from_user.id
-    if found_user_id == buyer_id:
+    if found_user == buyer_id:
         await message.reply("🌀 Нельзя купить самого себя!", reply_markup=kb)
         return
 
-    slave = await get_user(found_user_id)
-    owner_info = ""
-    if slave.get('owner'):
-        owner = await get_user(slave['owner'])
-        owner_info = f"@{owner['username']}" if owner else "Система"
-
-    price = slave['price']
+    slave = users[found_user]
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=f"💰 Купить за {price}₽ (Ур. {slave['slave_level']})",
-            callback_data=f"{SLAVE_PREFIX}{found_user_id}"
-        )],
+        [
+            InlineKeyboardButton(
+                text=f"💰 Купить за {slave['price']}₽ (Ур. {slave.get('slave_level', 0)})", 
+                callback_data=f"{SLAVE_PREFIX}{found_user}"
+            )
+        ],
         [InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]
     ])
 
+    owner_info = f"@{users[slave['owner']]['username']}" if slave.get('owner') else "Свободен"
+    
     await message.reply(
         f"🔎 <b>Найден раб:</b>\n"
         f"▸ Ник: @{slave['username']}\n"
-        f"▸ Уровень: {slave['slave_level']}\n"
-        f"▸ Цена: {price}₽\n"
+        f"▸ Уровень: {slave.get('slave_level', 0)}\n"
+        f"▸ Цена: {slave['price']}₽\n"
         f"▸ Владелец: {owner_info}\n\n"
-        f"💡 Доход: {80 * (1 + 0.25 * slave['slave_level'])}₽/цикл",
+        f"💡 <i>Доход от этого раба: {int(100 * (1 + 0.5 * slave.get('slave_level', 0)))}₽ за цикл работы</i>",
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
+@dp.callback_query(F.data == UPGRADES)
+async def upgrades_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id not in users:
+        await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
+        return
+    await callback.message.edit_text("🛠 Выберите улучшение:", reply_markup=upgrades_keyboard(user_id))
+    await callback.answer()
 
-@dp.callback_query(F.data.startswith(SLAVE_PREFIX))
-async def buy_slave_handler(callback: types.CallbackQuery):
+@dp.callback_query(F.data == REF_LINK)
+async def ref_link_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    ref_link = f"https://t.me/{(await bot.get_me()).username}?start={user_id}"
+    await callback.message.edit_text(
+        f"🔗 Ваша реферальная ссылка:\n<code>{ref_link}</code>\n\n"
+        "Приглашайте друзей и получайте 10% с их заработка!",
+        reply_markup=main_keyboard()
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == BUY_MENU)
+async def buy_menu_handler(callback: types.CallbackQuery):
+    await callback.message.edit_text("👥 Меню покупки рабов:", reply_markup=buy_menu_keyboard())
+    await callback.answer()
+
+@dp.callback_query(F.data == MAIN_MENU)
+async def main_menu_handler(callback: types.CallbackQuery):
+    await callback.message.edit_text("🔮 Главное меню:", reply_markup=main_keyboard())
+    await callback.answer()
+
+@dp.callback_query(F.data == TOP_OWNERS)
+async def top_owners_handler(callback: types.CallbackQuery):
     try:
-        buyer_id = callback.from_user.id
-        slave_id = int(callback.data.replace(SLAVE_PREFIX, ""))
+        current_user_id = callback.from_user.id
         
-        # Атомарная транзакция
-        async with await get_db() as conn:
-            # Получаем свежие данные
-            buyer = await get_user(buyer_id)
-            slave = await get_user(slave_id)
+        # Рассчитываем эффективность для всех пользователей
+        users_list = []
+        for user_id, user_data in users.items():
+            slaves_count = len(user_data.get("slaves", []))
+            total_income = user_data.get("total_income", 0)
+            efficiency = total_income / slaves_count if slaves_count > 0 else 0
+            users_list.append({
+                "user_id": user_id,
+                "username": user_data.get("username", "Unknown"),
+                "slaves": slaves_count,
+                "total_income": total_income,
+                "efficiency": efficiency
+            })
 
-            # Проверка щита
-            if slave.get('shield_active') and slave['shield_active'] > datetime.now():
-                shield_time = slave['shield_active'].strftime("%d.%m %H:%M")
-                await callback.answer(f"🛡 Защита до {shield_time}!", show_alert=True)
-                return
-
-            # Проверка баланса
-            price = slave['price']
-            if buyer['balance'] < price:
-                await callback.answer(f"❌ Нужно {price}₽!", show_alert=True)
-                return
-
-            # Обновление данных
-            buyer['balance'] -= price
-            buyer['slaves'].append(slave_id)
-            slave['owner'] = buyer_id
-            slave['slave_level'] = min(slave['slave_level'] + 1, 10)
-            slave['price'] = int(slave['base_price'] * (1.5 ** slave['slave_level']))
-
-            # Сохранение изменений
-            await update_user(buyer_id, buyer)
-            await update_user(slave_id, slave)
-
-            # Уведомление раба
-            try:
-                await bot.send_message(
-                    slave_id,
-                    f"⚡ Вас купил @{buyer['username']} за {price}₽"
-                )
-            except Exception as e:
-                logging.error(f"Notification error: {e}")
-
-            await callback.message.edit_text(
-                f"✅ Успешная покупка @{slave['username']}!\n"
-                f"▸ Новый уровень: {slave['slave_level']}\n"
-                f"▸ Новая цена: {slave['price']}₽",
-                reply_markup=main_keyboard()
-            )
-
-    except Exception as e:
-        logging.error(f"Buy slave error: {e}", exc_info=True)
-        await callback.answer("❌ Ошибка транзакции!", show_alert=True)
-
-@dp.callback_query(F.data.startswith(BUYOUT_PREFIX))
-async def buyout_handler(callback: types.CallbackQuery):
-    try:
-        user_id = callback.from_user.id
-        user = await get_user(user_id)
-        
-        if not user.get('owner'):
-            await callback.answer("🎉 Вы уже свободны!", show_alert=True)
-            return
-
-        # Расчет цены выкупа
-        base_price = user['base_price']
-        buyout_price = int(
-            (base_price + user['balance'] * 0.15) *  # 15% от баланса
-            (1 + user['slave_level'] * 0.35)        # 35% за уровень
+        # Сортируем по эффективности (по убыванию)
+        sorted_users = sorted(
+            users_list,
+            key=lambda x: x["efficiency"],
+            reverse=True
         )
-        buyout_price = max(200, min(25000, buyout_price))  # Новые лимиты
 
-        async with await get_db() as conn:
-            # Обновление данных
-            user['balance'] -= buyout_price
-            user['owner'] = None
-            owner = await get_user(user['owner'])
+        # Формируем топ-10
+        top_10 = sorted_users[:10]
+        
+        # Находим позицию текущего пользователя
+        user_position = None
+        for idx, user in enumerate(sorted_users, 1):
+            if user["user_id"] == current_user_id:
+                user_position = idx
+                break
 
-            if owner:
-                owner['slaves'].remove(user_id)
-                owner['balance'] += int(buyout_price * 0.65)  # 65% владельцу
-                await update_user(user['owner'], owner)
+        # Формируем текст
+        text = "🏆 <b>Топ рабовладельцев по эффективности:</b>\n\n"
+        text += "<i>Рейтинг рассчитывается как доход на одного раба</i>\n\n"
+        
+        # Выводим топ-10
+        for idx, user in enumerate(top_10, 1):
+            if user["efficiency"] > 0:
+                text += (
+                    f"{idx}. @{user['username']}\n"
+                    f"   ▸ Эффективность: {user['efficiency']:.1f}₽/раб\n"
+                    f"   ▸ Рабов: {user['slaves']} | Доход: {user['total_income']:.1f}₽\n\n"
+                )
 
-            await update_user(user_id, user)
+        # Добавляем позицию пользователя
+        if user_position:
+            if user_position <= 10:
+                text += f"\n🎉 Ваша позиция в топе: {user_position}"
+            else:
+                user_efficiency = next((u["efficiency"] for u in sorted_users if u["user_id"] == current_user_id), 0)
+                text += f"\n📊 Ваша эффективность: {user_efficiency:.1f}₽/раб (позиция #{user_position})"
+        else:
+            text += "\nℹ️ Вы пока не участвуете в рейтинге"
 
-            await callback.message.edit_text(
-                f"🎉 Свобода за {buyout_price}₽!\n"
-                f"▸ Сохранён уровень: {user['slave_level']}\n"
-                f"▸ Новый лимит рабов: {3 + user.get('upgrades', {}).get('barracks', 0) * 3}",
-                reply_markup=main_keyboard()
-            )
+        await callback.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)]
+                ]
+            ),
+            parse_mode=ParseMode.HTML
+        )
 
     except Exception as e:
-        logging.error(f"Buyout error: {e}", exc_info=True)
-        await callback.answer("🌀 Ошибка выкупа", show_alert=True)
-        # commands.py (Part 4/5)
-async def calculate_shield_price(user_id: int) -> int:
-    user = await get_user(user_id)
-    if not user:
-        return 0
-    
-    # Базовая формула: 6 часов пассивного дохода
-    passive_income = 1 + user.get("upgrades", {}).get("storage", 0) * 5  # Склад
-    for slave_id in user.get("slaves", []):
-        slave = await get_user(slave_id)
-        if slave:
-            passive_income += 80 * (1 + 0.25 * slave.get("slave_level", 0))
-    
-    price = int(passive_income * 60 * 6)  # 6 часов в минутах
-    price = max(500, min(15000, price))   # Лимиты цены
-    
-    # Скидка 25% для первых 3 покупок
-    if user.get("shop_purchases", 0) < 3:
-        price = int(price * 0.75)
-    
-    return (price // 100) * 100  # Округление до сотен
-
-async def calculate_shackles_price(slave_id: int) -> int:
-    slave = await get_user(slave_id)
-    if not slave:
-        return 0
-    
-    # Формула: 200% от стоимости раба
-    price = int(slave["price"] * 2.0)
-    return max(1000, min(30000, price))
+        logging.error(f"Top owners error: {e}", exc_info=True)
+        await callback.answer("🌀 Ошибка загрузки топа", show_alert=True)
+    finally:
+        await callback.answer()
 
 @dp.callback_query(F.data == "shop")
 async def shop_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    user = await get_user(user_id)
+    user = users.get(user_id)
     
-    shield_price = await calculate_shield_price(user_id)
-    shield_status = (
-        "🟢 До %s" % user["shield_active"].strftime("%d.%m %H:%M") 
-        if user.get("shield_active") and user["shield_active"] > datetime.now()
-        else "🔴 Неактивен"
-    )
+    if not user:
+        await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
+        return
+
+    shield_price = calculate_shield_price(user_id)
+    shield_status = "🟢 Активен" if user.get("shield_active") and user["shield_active"] > datetime.now() else "🔴 Неактивен"
     
     text = [
         "🛒 <b>Магический рынок</b>",
         "",
-        f"🛡 <b>Щит свободы</b> ({shield_status})",
-        f"▸ Защита от покупки на 24 часа",
+        f"🛡 <b>Щит свободы</b> {shield_status}",
+        f"▸ Защита от порабощения на 12ч",
         f"▸ Цена: {shield_price}₽",
         "",
-        "⛓ <b>Адские кандалы</b>",
-        "▸ Блокируют выкуп раба на 48 часов",
-        "▸ Цена: индивидуально для каждого раба"
+        "⛓ <b>Квантовые кандалы</b>",
+        "▸ Увеличивают время выкупа раба",
     ]
     
     buttons = [
         [InlineKeyboardButton(
-            text=f"🛡 Купить щит — {shield_price}₽",
+            text=f"🛒 Купить щит - {shield_price}₽",
             callback_data=f"{SHIELD_PREFIX}{shield_price}"
         )],
         [InlineKeyboardButton(
@@ -521,49 +659,93 @@ async def shop_handler(callback: types.CallbackQuery):
     )
     await callback.answer()
 
+@dp.callback_query(F.data.startswith(UPGRADE_PREFIX))
+async def upgrade_handler(callback: types.CallbackQuery):
+    try:
+        user_id = callback.from_user.id
+        upgrade_id = callback.data.replace(UPGRADE_PREFIX, "")
+        
+        if user_id not in users:
+            await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
+            return
+
+        user = users[user_id]
+        upgrade_data = upgrades.get(upgrade_id)
+        
+        if not upgrade_data:
+            await callback.answer("❌ Улучшение не найдено!", show_alert=True)
+            return
+
+        current_level = user.get("upgrades", {}).get(upgrade_id, 0)
+        price = upgrade_data["base_price"] * (current_level + 1)
+        
+        if user.get("balance", 0) < price:
+            await callback.answer("❌ Недостаточно средств!", show_alert=True)
+            return
+
+        # Выполняем улучшение
+        user["balance"] -= price
+        user.setdefault("upgrades", {})[upgrade_id] = current_level + 1
+        
+        # Обновляем пассивный доход для склада
+        if upgrade_id == "storage":
+            user["income_per_sec"] = (1 + user["upgrades"].get("storage", 0) * 10) / 60
+
+        # Сохраняем изменения в БД
+        save_db()
+
+        # Обновляем клавиатуру
+        try:
+            await callback.message.edit_reply_markup(
+                reply_markup=upgrades_keyboard(user_id)
+            )
+            await callback.answer(f"✅ {upgrade_data['name']} улучшен до уровня {current_level + 1}!")
+        except Exception as e:
+            logging.error(f"Ошибка обновления клавиатуры: {str(e)}")
+            await callback.answer("✅ Улучшение применено!", show_alert=True)
+
+    except Exception as e:
+        logging.error(f"Ошибка в обработчике улучшений: {str(e)}", exc_info=True)
+        await callback.answer("❌ Произошла ошибка при улучшении", show_alert=True)
+
 @dp.callback_query(F.data.startswith(SHIELD_PREFIX))
 async def buy_shield(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    user = await get_user(user_id)
+    user = users.get(user_id)
     price = int(callback.data.replace(SHIELD_PREFIX, ""))
     
-    if user["balance"] < price:
+    if user.get("shield_active") and user["shield_active"] > datetime.now():
+        await callback.answer("❌ У вас уже есть активный щит!", show_alert=True)
+        return
+        
+    if user.get("balance", 0) < price:
         await callback.answer("❌ Недостаточно средств!", show_alert=True)
         return
     
-    # Проверка активного щита
-    if user.get("shield_active") and user["shield_active"] > datetime.now():
-        await callback.answer("⚠️ Щит уже активен!", show_alert=True)
-        return
-    
-    # Обновление данных
     user["balance"] -= price
-    user["shield_active"] = datetime.now() + timedelta(hours=24)
+    user["shield_active"] = datetime.now() + timedelta(hours=12)
     user["shop_purchases"] = user.get("shop_purchases", 0) + 1
-    await update_user(user_id, user)
+    save_db()
     
-    await callback.answer(f"🛡 Щит активен до {user['shield_active'].strftime('%d.%m %H:%M')}!", show_alert=True)
-    await shop_handler(callback)
+    await callback.answer(f"🛡 Щит активирован до {user['shield_active'].strftime('%H:%M')}!", show_alert=True)
+    await shop_handler(callback)  # Обновляем магазин
 
 @dp.callback_query(F.data == "select_shackles")
 async def select_shackles(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    user = await get_user(user_id)
+    user = users.get(user_id)
     
-    if not user or len(user.get("slaves", [])) == 0:
+    if not user or not user.get("slaves"):
         await callback.answer("❌ У вас нет рабов!", show_alert=True)
         return
     
     buttons = []
-    for slave_id in user["slaves"][:10]:  # Ограничение 10 рабов
-        slave = await get_user(slave_id)
-        if not slave:
-            continue
-        
-        price = await calculate_shackles_price(slave_id)
+    for slave_id in user["slaves"][:5]:  # Максимум 5 первых рабов
+        slave = users.get(slave_id, {})
+        price = calculate_shackles_price(slave_id)
         buttons.append([
             InlineKeyboardButton(
-                text=f"⛓ @{slave['username']} — {price}₽",
+                text=f"⛓ @{slave.get('username', 'unknown')} - {price}₽",
                 callback_data=f"{SHACKLES_PREFIX}{slave_id}_{price}"
             )
         ])
@@ -578,229 +760,362 @@ async def select_shackles(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith(SHACKLES_PREFIX))
 async def buy_shackles(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = users.get(user_id)
     _, slave_id, price = callback.data.split("_")
     slave_id = int(slave_id)
     price = int(price)
-    user_id = callback.from_user.id
-    user = await get_user(user_id)
     
-    if user["balance"] < price:
+    if slave_id not in user.get("slaves", []):
+        await callback.answer("❌ Этот раб вам не принадлежит!", show_alert=True)
+        return
+        
+    if user.get("balance", 0) < price:
         await callback.answer("❌ Недостаточно средств!", show_alert=True)
         return
     
-    # Применение кандалов
+    # Применяем кандалы
     user["balance"] -= price
     if "shackles" not in user:
         user["shackles"] = {}
-    user["shackles"][slave_id] = datetime.now() + timedelta(hours=48)
-    await update_user(user_id, user)
+    user["shackles"][slave_id] = datetime.now() + timedelta(hours=24)
+    save_db()
     
     await callback.answer(
-        f"⛓ Кандалы применены к @{slave['username']} на 48 часов!",
+        f"⛓ Кандалы применены к @{users[slave_id].get('username', 'unknown')} на 24ч!",
         show_alert=True
     )
-    await select_shackles(callback)
+    await select_shackles(callback)  # Возврат к выбору
 
-@dp.callback_query(F.data.startswith(UPGRADE_PREFIX))
-async def upgrade_handler(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    upgrade_id = callback.data.replace(UPGRADE_PREFIX, "")
-    user = await get_user(user_id)
-    
-    if not user or upgrade_id not in upgrades:
-        await callback.answer("❌ Ошибка!", show_alert=True)
-        return
-    
-    level = user.get("upgrades", {}).get(upgrade_id, 0)
-    data = upgrades[upgrade_id]
-    price = int(data["base_price"] * (data["multiplier"] ** level))
-    
-    if user["balance"] < price:
-        await callback.answer(f"❌ Нужно {price}₽!", show_alert=True)
-        return
-    
-    # Применение улучшения
-    user["balance"] -= price
-    user["upgrades"][upgrade_id] = level + 1
-    
-    # Спецэффекты
-    if upgrade_id == "barracks":
-        max_slaves = 5 + user["upgrades"]["barracks"] * 3
-        if len(user["slaves"]) > max_slaves:
-            user["slaves"] = user["slaves"][:max_slaves]
-    
-    await update_user(user_id, user)
-    
-    await callback.message.edit_reply_markup(
-        reply_markup=await upgrades_keyboard(user_id)
-    )
-    await callback.answer(f"✅ {data['name']} улучшен до уровня {level + 1}!")
-    # commands.py (Part 5/5)
+@dp.callback_query(F.data.startswith(SLAVE_PREFIX))
+@dp.callback_query(F.data.startswith(SLAVE_PREFIX))
+async def buy_slave_handler(callback: types.CallbackQuery):
+    try:
+        buyer_id = callback.from_user.id
+        slave_id = int(callback.data.replace(SLAVE_PREFIX, ""))
+        
+        # Проверка существования пользователей
+        if buyer_id not in users or slave_id not in users:
+            await callback.answer("❌ Ошибка: пользователь не найден", show_alert=True)
+            return
+
+        buyer = users[buyer_id]
+        slave = users[slave_id]
+
+        # Проверка щита защиты
+        if slave.get("shield_active") and slave["shield_active"] > datetime.now():
+            shield_time = slave["shield_active"].strftime("%d.%m %H:%M")
+            await callback.answer(
+                f"🛡 Цель защищена щитом до {shield_time}",
+                show_alert=True
+            )
+            return
+
+        # Проверка на покупку самого себя
+        if slave_id == buyer_id:
+            await callback.answer("❌ Нельзя купить самого себя!", show_alert=True)
+            return
+
+        # Проверка иерархии рабства
+        if buyer.get("owner") == slave_id:
+            await callback.answer("❌ Нельзя купить своего владельца!", show_alert=True)
+            return
+
+        # Проверка двойного владения
+        if slave.get("owner") == buyer_id:
+            await callback.answer("❌ Этот раб уже принадлежит вам!", show_alert=True)
+            return
+
+        # Проверка текущего владельца
+        previous_owner_id = slave.get("owner")
+        if previous_owner_id and previous_owner_id != buyer_id:
+            await callback.answer(
+                f"❌ Раб принадлежит @{users[previous_owner_id].get('username', 'unknown')}",
+                show_alert=True
+            )
+            return
+
+        price = slave.get("price", 100)
+        
+        # Проверка баланса с запасом 1% для округления
+        if buyer["balance"] < price * 0.99:
+            await callback.answer(
+                f"❌ Нужно {price}₽ (у вас {buyer['balance']:.0f}₽)",
+                show_alert=True
+            )
+            return
+
+        # Логика покупки
+        if previous_owner_id:
+            previous_owner = users[previous_owner_id]
+            
+            # Удаляем из списка рабов предыдущего владельца
+            if slave_id in previous_owner.get("slaves", []):
+                previous_owner["slaves"].remove(slave_id)
+            
+            # Комиссия 10% предыдущему владельцу
+            commission = int(price * 0.1)
+            previous_owner["balance"] += commission
+            previous_owner["total_income"] += commission
+
+            # Снимаем кандалы при смене владельца
+            if "shackles" in previous_owner and slave_id in previous_owner["shackles"]:
+                del previous_owner["shackles"][slave_id]
+
+        # Основная транзакция
+        buyer["balance"] -= price
+        buyer.setdefault("slaves", []).append(slave_id)
+
+        # Обновление данных раба
+        slave["owner"] = buyer_id
+        slave["slave_level"] = min(  # Ограничение уровня
+            slave.get("slave_level", 0) + 1, 
+            10  # Максимальный уровень
+        )
+        slave["price"] = int(slave.get("base_price", 100) * (1.5 ** slave["slave_level"]))
+        slave["enslaved_date"] = datetime.now()
+
+        # Формирование сообщения
+        msg = [
+            f"✅ Куплен @{slave.get('username', 'безымянный')} за {price}₽",
+            f"▸ Уровень: {slave['slave_level']}",
+            f"▸ Новая цена: {slave['price']}₽",
+            f"▸ Доход/час: {100 * (1 + 0.3 * slave['slave_level'])}₽"
+        ]
+        
+        if previous_owner_id:
+            msg.append(f"▸ Комиссия владельцу: {commission}₽")
+
+        # Уведомление раба
+        try:
+            await bot.send_message(
+                slave_id,
+                f"⚡ Вы приобретены @{buyer.get('username', 'unknown')} "
+                f"за {price}₽ (уровень {slave['slave_level']})"
+            )
+        except Exception:
+            pass
+
+        save_db()
+        await callback.message.edit_text("\n".join(msg), reply_markup=main_keyboard())
+        await callback.answer()
+
+    except Exception as e:
+        logging.error(f"Ошибка покупки раба: {e}", exc_info=True)
+        await callback.answer("❌ Критическая ошибка транзакции", show_alert=True)
+@dp.callback_query(F.data.startswith(BUYOUT_PREFIX))
+@dp.callback_query(F.data.startswith(BUYOUT_PREFIX))
+async def buyout_handler(callback: types.CallbackQuery):
+    try:
+        user_id = callback.from_user.id
+        user = users.get(user_id)
+        
+        # Базовые проверки
+        if not user:
+            await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
+            return
+            
+        if not user.get("owner"):
+            await callback.answer("❌ Вы и так свободны!", show_alert=True)
+            return
+
+        # Проверка кандалов
+        owner = users.get(user["owner"], {})
+        if owner.get("shackles", {}).get(user_id):
+            shackles_end = owner["shackles"][user_id].strftime("%d.%m %H:%M")
+            await callback.answer(
+                f"⛓ Вы в кандалах до {shackles_end}!\n"
+                f"Выкуп временно невозможен",
+                show_alert=True
+            )
+            return
+
+        # Расчет цены выкупа
+        base_price = user.get("base_price", 100)
+        slave_level = user.get("slave_level", 0)
+        
+        # Формула: (база + 5% капитала) * (1 + 0.3 за уровень)
+        buyout_price = int(
+            (base_price + user["balance"] * 0.05) * 
+            (1 + slave_level * 0.3)
+        )
+        
+        # Ограничения цены
+        buyout_price = max(100, min(20000, buyout_price))  # 100-20k
+        
+        # Проверка баланса (с запасом 1%)
+        if user["balance"] < buyout_price * 0.99:
+            await callback.answer(
+                f"❌ Не хватает {buyout_price - user['balance']:.0f}₽\n"
+                f"Требуется: {buyout_price}₽",
+                show_alert=True
+            )
+            return
+
+        # Процесс выкупа
+        owner_id = user["owner"]
+        user["balance"] -= buyout_price
+        user["owner"] = None
+        user["price"] = base_price  # Сброс цены
+        
+        # Владелец получает 60% от выкупа (вместо 50%)
+        if owner_id in users:
+            owner_income = int(buyout_price * 0.6)
+            users[owner_id]["balance"] += owner_income
+            users[owner_id]["total_income"] += owner_income
+            
+            # Удаляем из списка рабов
+            if user_id in users[owner_id].get("slaves", []):
+                users[owner_id]["slaves"].remove(user_id)
+            
+            # Уведомление владельца
+            try:
+                await bot.send_message(
+                    owner_id,
+                    f"🔓 Раб @{user.get('username', 'unknown')} "
+                    f"выкупился за {buyout_price}₽\n"
+                    f"Ваш доход: {owner_income}₽"
+                )
+            except Exception:
+                pass
+
+        # Обновление статистики
+        user["total_spent"] = user.get("total_spent", 0) + buyout_price
+        user["buyout_count"] = user.get("buyout_count", 0) + 1
+        
+        # Сообщение об успехе
+        await callback.message.edit_text(
+            f"🎉 <b>Вы свободны!</b>\n"
+            f"▸ Потрачено: {buyout_price}₽\n"
+            f"▸ Сохранён уровень: {slave_level}\n"
+            f"▸ Новая цена: {base_price}₽\n\n"
+            f"<i>Теперь вы не платите 30% налог владельцу</i>",
+            reply_markup=main_keyboard(),
+            parse_mode=ParseMode.HTML
+        )
+        
+        save_db()
+        await callback.answer()
+
+    except Exception as e:
+        logging.error(f"Buyout error: {e}", exc_info=True)
+        await callback.answer("🌀 Произошла ошибка при выкупе", show_alert=True)
+# Обновленный профиль
 @dp.callback_query(F.data == PROFILE)
 async def profile_handler(callback: types.CallbackQuery):
     try:
         user_id = callback.from_user.id
-        user = await get_user(user_id)
+        user = users.get(user_id)
         
         if not user:
             await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
             return
         
-        # Расчет пассивного дохода
-        passive_income = 1 + user.get("upgrades", {}).get("storage", 0) * 5
-        for slave_id in user.get("slaves", []):
-            slave = await get_user(slave_id)
-            if slave:
-                passive_income += 80 * (1 + 0.25 * slave.get("slave_level", 0))
-        
-        # Расчет цены выкупа
+        # Рассчитываем цену выкупа
         buyout_price = 0
         if user.get("owner"):
-            base_price = user["base_price"]
-            buyout_price = int(
-                (base_price + user["balance"] * 0.15) * 
-                (1 + user["slave_level"] * 0.35)
-            )
-            buyout_price = max(200, min(25000, buyout_price))
+            base_price = user.get("base_price", 100)
+            buyout_price = int((base_price + user["balance"] * 0.1) * (1 + user.get("slave_level", 0) * 0.5))
+            buyout_price = max(100, min(10000, buyout_price))
         
-        # Формирование профиля
+        # Формируем текст профиля
         text = [
-            f"👤 <b>Профиль @{user['username']}</b>",
-            f"▸ 💰 Баланс: {user['balance']:.1f}₽",
-            f"▸ 🕒 Пассив/час: {passive_income * 60:.1f}₽",
-            f"▸ 🛠 Улучшения: {sum(user['upgrades'].values())}",
-            f"▸ 👥 Рабов: {len(user['slaves'])}/{5 + user['upgrades'].get('barracks', 0)*3}"
+            f"👑 <b>Профиль @{user.get('username', 'unknown')}</b>",
+            f"▸ 💰 Баланс: {user.get('balance', 0):.1f}₽",
+            f"▸ 👥 Уровень раба: {user.get('slave_level', 0)}",
+            f"▸ 🛠 Улучшения: {sum(user.get('upgrades', {}).values())}",
         ]
         
         if user.get("owner"):
-            owner = await get_user(user["owner"])
+            owner = users.get(user["owner"], {})
             text.append(
-                f"\n⚠️ <b>Вы раб @{owner['username'] if owner else 'Система'}</b>\n"
-                f"▸ Уровень рабства: {user['slave_level']}\n"
+                f"⚠️ <b>Налог рабства:</b> 30% дохода → @{owner.get('username', 'unknown')}\n"
                 f"▸ Цена выкупа: {buyout_price}₽"
             )
-            kb = [[InlineKeyboardButton(
-                text=f"🆓 Выкупиться за {buyout_price}₽", 
-                callback_data=f"{BUYOUT_PREFIX}{buyout_price}"
-            )]]
         else:
-            text.append("\n🌟 <b>Статус:</b> Свободный гражданин")
-            kb = []
-        
-        kb.append([InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)])
+            text.append("🔗 Вы свободный человек")
+            
+        # Кнопка выкупа
+        keyboard = []
+        if user.get("owner"):
+            keyboard.append([
+                InlineKeyboardButton(
+                    text=f"🆓 Выкупиться за {buyout_price}₽",
+                    callback_data=f"{BUYOUT_PREFIX}{buyout_price}"
+                )
+            ])
+        keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)])
         
         await callback.message.edit_text(
             "\n".join(text),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
             parse_mode=ParseMode.HTML
         )
+        await callback.answer()
         
     except Exception as e:
-        logging.error(f"Profile error: {e}", exc_info=True)
+        logging.error(f"Ошибка профиля: {e}", exc_info=True)
         await callback.answer("❌ Ошибка загрузки профиля", show_alert=True)
-    await callback.answer()
-
-@dp.callback_query(F.data == TOP_OWNERS)
-async def top_owners_handler(callback: types.CallbackQuery):
-    try:
-        async with await get_db() as conn:
-            records = await conn.fetch("SELECT data FROM bot_users")
-            users_data = [deserialize_user_data(r['data']) for r in records]
         
-        # Расчет эффективности
-        top_list = []
-        for user in users_data:
-            if slaves_count := len(user.get("slaves", [])):
-                efficiency = user.get("total_income", 0) / slaves_count
-                top_list.append({
-                    "username": user.get("username", "Unknown"),
-                    "efficiency": efficiency,
-                    "slaves": slaves_count,
-                    "income": user.get("total_income", 0)
-                })
-        
-        # Сортировка и выбор топ-15
-        sorted_top = sorted(top_list, key=lambda x: x["efficiency"], reverse=True)[:15]
-        
-        # Формирование сообщения
-        text = ["🏆 <b>Топ рабовладельцев</b>\n▸ Эффективность = Доход/Раба\n"]
-        for idx, item in enumerate(sorted_top, 1):
-            text.append(
-                f"{idx}. @{item['username']}\n"
-                f"   ▸ Эфф.: {item['efficiency']:.1f}₽\n"
-                f"   ▸ Рабов: {item['slaves']} | Доход: {item['income']}₽\n"
-            )
-        
-        await callback.message.edit_text(
-            "\n".join(text)[:4096],  # Ограничение Telegram
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)]]
-            ),
-            parse_mode=ParseMode.HTML
-        )
-        
-    except Exception as e:
-        logging.error(f"Top error: {e}", exc_info=True)
-        await callback.answer("🌀 Ошибка загрузки топа", show_alert=True)
-    await callback.answer()
-
-async def passive_income_task():
-    while True:
-        await asyncio.sleep(60)
-        try:
-            async with await get_db() as conn:
-                records = await conn.fetch("SELECT user_id, data FROM bot_users")
-                for record in records:
-                    user = deserialize_user_data(record['data'])
-                    if not user.get("last_passive"):
-                        continue
-                        
-                    mins_passed = (datetime.now() - user["last_passive"]).total_seconds() / 60
-                    if mins_passed < 1:
-                        continue
-                    
-                    # Расчет дохода
-                    income = 1 + user.get("upgrades", {}).get("storage", 0) * 5
-                    for slave_id in user.get("slaves", []):
-                        slave = await get_user(slave_id)
-                        if slave:
-                            income += 80 * (1 + 0.25 * slave.get("slave_level", 0))
-                    
-                    total_income = income * mins_passed
-                    user["balance"] += total_income
-                    user["total_income"] += total_income
-                    user["last_passive"] = datetime.now()
-                    
-                    # Автосохранение
-                    await update_user(record['user_id'], user)
-                    
-        except Exception as e:
-            logging.error(f"Passive income error: {e}")
-
 async def autosave_task():
     while True:
-        await asyncio.sleep(300)
-        logging.info("Autosave completed")
+        await asyncio.sleep(300)  # 5 минут
+        save_db()
         
 async def on_startup():
-    await init_db()
+    global users
+    users = load_db()  # Загружаем БД при старте
     asyncio.create_task(passive_income_task())
     asyncio.create_task(autosave_task())
-    logging.info("Bot started")
-
+    # Сохраняем БД при корректном завершении
+    import signal
+    import functools
+    def save_on_exit(*args):
+        save_db()
+    
+    signal.signal(signal.SIGTERM, save_on_exit)
+    signal.signal(signal.SIGINT, save_on_exit)
+    
 async def on_shutdown():
-    logging.info("Bot stopped")
+    save_db() 
+
+
+async def main():
+    try:
+        # Инициализация логирования (должна быть первой)
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+            handlers=[
+                logging.StreamHandler(),
+                logging.FileHandler("bot.log", encoding='utf-8')
+            ]
+        )
+        logger = logging.getLogger(__name__)
+        
+        logger.info("Запуск бота...")
+        
+        # Загрузка и инициализация
+        await on_startup()
+        
+        # Основной цикл бота
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Бот остановлен вручную")
+    except Exception as e:
+        logger.critical(f"Критическая ошибка: {str(e)}", exc_info=True)
+    finally:
+        logger.info("Завершение работы...")
+        await on_shutdown()
+        logger.info("Бот успешно остановлен")
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[logging.FileHandler("bot.log"), logging.StreamHandler()]
-    )
-    
     try:
-        asyncio.run(dp.start_polling(bot))
+        # Для Windows нужно установить специальный event loop
+        if os.name == 'nt':
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            
+        asyncio.run(main())
     except KeyboardInterrupt:
         pass
-    finally:
-        asyncio.run(on_shutdown())
