@@ -103,6 +103,7 @@ def buy_menu_keyboard():
     ])
     
 def save_db():
+    # Сохраняем данные в файл
     with open(DB_FILE, 'w', encoding='utf-8') as f:
         # Конвертируем datetime в строку для сохранения
         db_to_save = {}
@@ -114,6 +115,13 @@ def save_db():
                 else:
                     db_to_save[user_id][key] = value
         json.dump(db_to_save, f, ensure_ascii=False, indent=4)
+    
+    # Устанавливаем права на файл после сохранения (только если файл существует)
+    if os.path.exists(DB_FILE):
+        try:
+            os.chmod(DB_FILE, 0o644)  # Права: владелец - чтение/запись, остальные - только чтение
+        except Exception as e:
+            logging.error(f"Ошибка при установке прав на файл {DB_FILE}: {e}")
 
 def load_db():
     if not os.path.exists(DB_FILE):
