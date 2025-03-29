@@ -113,23 +113,22 @@ async def passive_income_task():
         now = datetime.now()
         for user_id, user in users.items():
             if "last_passive" in user:
-                # Рассчитываем пассивный доход
                 mins_passed = (now - user["last_passive"]).total_seconds() / 60
                 
-                # Базовый пассивный доход
+                # Базовый доход
                 base_income = 1 * mins_passed
                 
-                # Доход от улучшения "Склад"
+                # Доход от склада
                 storage_income = user.get("upgrades", {}).get("storage", 0) * 10 * mins_passed
                 
                 # Доход от рабов
                 slaves_income = sum(
                     100 * (1 + 0.3 * users[slave_id].get("slave_level", 0)) * mins_passed
-                    for slave_id in user["slaves"]
+                    for slave_id in user.get("slaves", [])
+                    if slave_id in users  # Защита от удаленных пользователей
                 )
                 
-                # Общий доход
-                total_income = (base_income + storage_income + slaves_income)
+                total_income = base_income + storage_income + slaves_income
                 
                 user["balance"] += total_income
                 user["total_income"] += total_income
@@ -217,6 +216,7 @@ async def search_user_handler(callback: types.CallbackQuery):
     )
     await callback.answer()
     
+
 @dp.callback_query(F.data == WORK)
 async def work_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -234,14 +234,17 @@ async def work_handler(callback: types.CallbackQuery):
         await callback.answer(f"⏳ Подождите еще {remaining} минут", show_alert=True)
         return
     
-    # Бонус = 20 минутный пассивный доход * множитель
+    # Рассчитываем текущий пассивный доход в минуту
     passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 10
     passive_per_min += sum(
         100 * (1 + 0.3 * users[slave_id].get("slave_level", 0))
-        for slave_id in user["slaves"]
-    ) / 60  # Переводим в минуту
+        for slave_id in user.get("slaves", [])
+        if slave_id in users
+    ) / 60
     
-    work_bonus = passive_per_min * 20 * (1 + user.get("upgrades", {}).get("whip", 0) * 0.25)
+    # Бонус = 20 минут пассивного дохода * множитель кнутов
+    whip_bonus = 1 + user.get("upgrades", {}).get("whip", 0) * 0.25
+    work_bonus = passive_per_min * 20 * whip_bonus
     
     user["balance"] += work_bonus
     user["total_income"] += work_bonus
@@ -254,7 +257,6 @@ async def work_handler(callback: types.CallbackQuery):
         reply_markup=main_keyboard()
     )
     await callback.answer()
-    
 
 @dp.message(F.text & ~F.text.startswith('/'))
 async def process_username(message: Message):
