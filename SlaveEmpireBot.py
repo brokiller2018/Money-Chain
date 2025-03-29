@@ -97,33 +97,7 @@ def buy_menu_keyboard():
         [InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)]
     ])
 
-def get_public_profile(target_user_id: int) -> str:
-    user = users.get(target_user_id)
-    if not user:
-        return "❌ Пользователь не найден"
-    
-    slaves_count = len(user.get("slaves", []))
-    max_slaves = 5 + user.get("upgrades", {}).get("barracks", 0) * 5
-    
-    text = (
-        f"👤 <b>Профиль @{user.get('username', 'unknown')}</b>\n\n"
-        f"▸ 👥 Рабы: {slaves_count}/{max_slaves}\n"
-        f"▸ 🛠 Улучшения: {sum(user.get('upgrades', {}).values())}\n"
-    )
-    
-    if user.get("owner"):
-        owner_username = users.get(user["owner"], {}).get("username", "unknown")
-        text += f"▸ Владелец: @{owner_username}\n"
-    else:
-        text += "▸ Свободный человек\n"
-    
-    if slaves_count > 0:
-        text += "\n<b>Топ рабов:</b>\n"
-        for uid in user.get("slaves", [])[:3]:
-            slave_data = users.get(uid, {})
-            text += f"▸ @{slave_data.get('username', 'unknown')} ({slave_data.get('price', 0)}₽)\n"
-    
-    return text
+
 # Вспомогательные функции
 async def check_subscription(user_id: int):
     try:
@@ -219,15 +193,17 @@ async def check_sub_callback(callback: types.CallbackQuery):
 @dp.callback_query(F.data == SEARCH_USER)
 async def search_user_handler(callback: types.CallbackQuery):
     await callback.message.edit_text(
-        "🔍 Введите @username игрока (без собачки):",
+        "🔍 Введите @username игрока (можно с собакой):\n"
+        "Пример: <code>@username123</code> или просто <code>username123</code>",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]
+                [InlineKeyboardButton(text="🔙 В меню покупок", callback_data=BUY_MENU)]
             ]
-        )
+        ),
+        parse_mode=ParseMode.HTML
     )
     await callback.answer()
-
+    
 @dp.callback_query(F.data == WORK)
 async def work_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -267,41 +243,59 @@ async def work_handler(callback: types.CallbackQuery):
     )
     await callback.answer()
     
+
 @dp.message(F.text & ~F.text.startswith('/'))
 async def process_username(message: Message):
-    username = message.text.strip().lower().replace('@', '')  # Удаляем @ если есть
-    buyer_id = message.from_user.id
+    # Нормализация username (удаляем @ и лишние пробелы)
+    username = message.text.strip().lower().replace('@', '')
     
+    # Поиск пользователя
     found_user = None
     for uid, data in users.items():
         if data.get("username", "").lower() == username:
             found_user = uid
             break
-    
-    if not found_user:
-        return await message.reply("❌ Игрок не найден!")
-    
-    if found_user == buyer_id:
-        return await message.reply("🌀 Нельзя купить самого себя!")
-    
-    slave = users.get(found_user, {})
-    price = slave.get("price", 100)
-    
-    owner_info = "Свободен"
-    if slave.get("owner"):
-        owner_data = users.get(slave["owner"], {})
-        owner_info = f"@{owner_data.get('username', 'unknown')}"
-    
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"💰 Купить за {price}₽", callback_data=f"{SLAVE_PREFIX}{found_user}")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]
     ])
+
+    if not found_user:
+        await message.reply(
+            "❌ Игрок не найден. Проверьте:\n"
+            "1. Правильность написания\n"
+            "2. Игрок должен быть зарегистрирован в боте",
+            reply_markup=kb
+        )
+        return
+
+    buyer_id = message.from_user.id
+    if found_user == buyer_id:
+        await message.reply("🌀 Нельзя купить самого себя!", reply_markup=kb)
+        return
+
+    slave = users[found_user]
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text=f"💰 Купить за {slave['price']}₽ (Ур. {slave.get('slave_level', 0)})", 
+                callback_data=f"{SLAVE_PREFIX}{found_user}"
+            )
+        ],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)]
+    ])
+
+    owner_info = f"@{users[slave['owner']]['username']}" if slave.get('owner') else "Свободен"
     
     await message.reply(
-        f"🔎 <b>Найден игрок:</b> @{slave.get('username', 'unknown')}\n"
-        f"▸ Цена: {price}₽\n"
-        f"▸ Владелец: {owner_info}",
-        reply_markup=kb
+        f"🔎 <b>Найден раб:</b>\n"
+        f"▸ Ник: @{slave['username']}\n"
+        f"▸ Уровень: {slave.get('slave_level', 0)}\n"
+        f"▸ Цена: {slave['price']}₽\n"
+        f"▸ Владелец: {owner_info}\n\n"
+        f"💡 <i>Доход от этого раба: {int(100 * (1 + 0.5 * slave.get('slave_level', 0))}₽ за цикл работы</i>",
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
     )
 @dp.callback_query(F.data == UPGRADES)
 async def upgrades_handler(callback: types.CallbackQuery):
@@ -433,42 +427,6 @@ async def buy_slave_handler(callback: types.CallbackQuery):
     await callback.message.edit_text("\n".join(msg), reply_markup=main_keyboard())
     await callback.answer()
 
-@dp.message(F.text.startswith("@"))
-async def view_profile_by_username(message: Message):
-    username = message.text[1:].strip().lower()
-    caller_id = message.from_user.id
-    
-    # Проверяем подписку
-    if not await check_subscription(caller_id):
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔔 Подписаться", url=CHANNEL_LINK)],
-            [InlineKeyboardButton(text="✅ Я подписался", callback_data=f"{CHECK_SUB}{caller_id}")]
-        ])
-        await message.answer("📌 Для просмотра профилей подпишитесь на канал:", reply_markup=kb)
-        return
-    
-    # Ищем пользователя
-    target_user = None
-    for uid, data in users.items():
-        if data.get("username", "").lower() == username:
-            target_user = uid
-            break
-    
-    if not target_user:
-        await message.reply("❌ Пользователь не найден")
-        return
-    
-    # Если смотрим свой профиль - перенаправляем на стандартный обработчик
-    if target_user == caller_id:
-        await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
-        return
-    
-    text = get_public_profile(target_user)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 В главное меню", callback_data=MAIN_MENU)]
-    ])
-    
-    await message.reply(text, reply_markup=kb)
 # Обновленный профиль
 @dp.callback_query(F.data == PROFILE)
 async def profile_handler(callback: types.CallbackQuery):
