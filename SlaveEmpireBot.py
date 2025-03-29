@@ -139,6 +139,8 @@ async def start_command(message: Message):
             "balance": 100,
             "slaves": [],
             "owner": None,
+            "base_price": 100,  
+            "slave_level": 0,    
             "price": 100,
             "last_work": None,
             "upgrades": {key: 0 for key in upgrades},
@@ -345,43 +347,71 @@ async def buy_slave_handler(callback: types.CallbackQuery):
     buyer = users.get(buyer_id)
     slave = users.get(slave_id)
     
+    # Проверка существования пользователей
     if not buyer or not slave:
         await callback.answer("❌ Ошибка: пользователь не найден", show_alert=True)
         return
     
+    # Проверка на самопокупку
     if slave_id == buyer_id:
         await callback.answer("❌ Нельзя купить самого себя!", show_alert=True)
         return
     
+    # Проверка текущего владельца
+    previous_owner = None
     if slave["owner"] is not None:
-        owner = users.get(slave["owner"])
-        await callback.answer(
-            f"❌ Этот раб уже принадлежит @{owner.get('username', 'unknown')}",
-            show_alert=True
-        )
-        return
+        previous_owner = users.get(slave["owner"])
+        if previous_owner:
+            await callback.answer(
+                f"❌ Этот раб уже принадлежит @{previous_owner.get('username', 'unknown')}",
+                show_alert=True
+            )
+            return
     
-    price = slave["price"]
-    
+    # Проверка баланса
+    price = slave.get("price", 100)
     if buyer["balance"] < price:
         await callback.answer("❌ Недостаточно средств!", show_alert=True)
         return
     
-    # Совершаем покупку
-    buyer["balance"] -= price
-    buyer["slaves"].append(slave_id)
-    slave["owner"] = buyer_id
-    slave["price"] = int(price * 1.5)  # Увеличиваем цену
+    # Выплата предыдущему владельцу
+    if previous_owner:
+        commission = int(price * 0.1)
+        previous_owner["balance"] += commission
+        previous_owner["total_income"] += commission
     
-    # Обновляем сообщение
-    owner_info = f"@{buyer['username']}" if buyer["username"] else f"ID:{buyer_id}"
-    await callback.message.edit_text(
+    # Обновление данных покупателя
+    buyer["balance"] -= price
+    buyer["total_income"] -= price  # Учитываем расходы
+    
+    # Если раб уже был в списке у предыдущего владельца
+    if previous_owner and slave_id in previous_owner["slaves"]:
+        previous_owner["slaves"].remove(slave_id)
+    
+    buyer["slaves"].append(slave_id)
+    
+    # Обновление данных раба
+    slave["owner"] = buyer_id
+    slave.setdefault("base_price", 100)  # Защита от отсутствия базовой цены
+    slave["slave_level"] = slave.get("slave_level", 0) + 1
+    slave["price"] = int(slave["base_price"] * (1.5 ** slave["slave_level"]))
+    
+    # Формирование сообщения
+    message_text = (
         f"✅ Вы успешно купили @{slave['username']} за {price}₽!\n"
-        f"Новая цена раба: {slave['price']}₽",
+        f"▸ Уровень раба: {slave['slave_level']}\n"
+        f"▸ Новая цена: {slave['price']}₽"
+    )
+    
+    if previous_owner:
+        message_text += f"\n▸ Предыдущий владелец получил {commission}₽ комиссии"
+    
+    await callback.message.edit_text(
+        message_text,
         reply_markup=main_keyboard()
     )
     await callback.answer()
-
+    
 # Обновленный профиль
 @dp.callback_query(F.data == PROFILE)
 async def profile_handler(callback: types.CallbackQuery):
