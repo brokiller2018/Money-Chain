@@ -539,39 +539,6 @@ async def show_random_slaves(callback: types.CallbackQuery):
         logging.error(f"КРИТИЧЕСКАЯ ОШИБКА: {e}", exc_info=True)
         await callback.answer("⚠️ Произошла непредвиденная ошибка", show_alert=True)
     
-    # Функция для расчета рейтинга
-    def get_slave_score(slave_data):
-        level = slave_data.get("slave_level", 0)
-        price = slave_data.get("price", 100)
-        return (level * 2) - (price / 100)  # Чем выше уровень и ниже цена - тем лучше
-    
-    # Сортируем по рейтингу привлекательности и берём топ-10
-    sorted_slaves = sorted(
-        available_slaves, 
-        key=lambda x: get_slave_score(x[1]),
-        reverse=True  # Сортируем по убыванию рейтинга
-    )[:10]
-
-    if not sorted_slaves:
-        await callback.answer("😢 Нет доступных рабов", show_alert=True)
-        return
-
-    buttons = []
-    for slave_id, slave_data in sorted_slaves:
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"👤 Ур.{slave_data.get('slave_level', 0)} @{slave_data['username']} - {slave_data['price']}₽ (Рейтинг: {get_slave_score(slave_data):.1f})",
-                callback_data=f"{SLAVE_PREFIX}{slave_id}"
-            )
-        ])
-    
-    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)])
-    
-    await callback.message.edit_text(
-        "🎲 Доступные рабы (Топ-10 по рейтингу привлекательности):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
-    )
-
 @dp.callback_query(F.data.startswith(CHECK_SUB))
 async def check_sub_callback(callback: types.CallbackQuery):
     user_id = int(callback.data.replace(CHECK_SUB, ""))
@@ -610,8 +577,8 @@ async def check_sub_callback(callback: types.CallbackQuery):
 @dp.callback_query(F.data == SEARCH_USER)
 async def search_user_handler(callback: types.CallbackQuery):
     await callback.message.edit_text(
-        "🔍 Введите @username игрока (можно с собакой):\n"
-        "Пример: <code>@username123</code> или просто <code>username123</code>",
+        "🔍 Введите @username игрока:\n"
+        "Пример: <code>@username123</code>",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="🔙 В меню покупок", callback_data=BUY_MENU)]
