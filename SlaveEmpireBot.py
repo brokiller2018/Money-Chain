@@ -408,6 +408,13 @@ async def start_command(message: Message):
     else:
         await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
 
+@dp.message(F.text & ~F.command)
+async def text_messages_handler(message: Message):
+    """Обрабатывает только текстовые сообщения, не являющиеся командами"""
+    # Игнорируем все обычные сообщения
+    return
+
+
 @dp.callback_query(F.data == "random_slaves")
 async def show_random_slaves(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -1120,29 +1127,30 @@ async def buyout_handler(callback: types.CallbackQuery):
 
 @dp.message(Command('top_user'))
 async def top_users_chat_handler(message: Message):
-    try:
-        # Рассчитываем топ по количеству рабов
-        top_owners = sorted(
-            users.values(),
-            key=lambda x: len(x.get('slaves', [])),
-            reverse=True
-        )[:5]  # Топ-5 по количеству рабов
-
-        # Формируем текст
-        text = "🏆 <b>Топ рабовладельцев по количеству рабов:</b>\n\n"
-        for idx, user in enumerate(top_owners, 1):
-            text += (
-                f"{idx}. @{user.get('username', 'unknown')} "
-                f"- {len(user.get('slaves', []))} рабов\n"
-            )
-
-        text += "\nℹ️ Подробный топ доступен в ЛС бота через меню"
+    # Проверяем, что это именно команда, а не просто текст
+    if not message.text.startswith('/'):
+        return
         
+    try:
+        # Фильтруем только владельцев с рабами
+        owners = [u for u in users.values() if u.get('slaves')]
+        
+        if not owners:
+            await message.reply("😢 Пока нет рабовладельцев")
+            return
+
+        # Сортируем по количеству рабов
+        top = sorted(owners, key=lambda x: len(x['slaves']), reverse=True)[:5]
+        
+        # Формируем ответ
+        text = "🏆 <b>Топ рабовладельцев:</b>\n\n"
+        for i, user in enumerate(top, 1):
+            text += f"{i}. @{user.get('username', 'unknown')} - {len(user['slaves'])} рабов\n"
+            
         await message.reply(text, parse_mode=ParseMode.HTML)
-
+        
     except Exception as e:
-        logging.error(f"Ошибка формирования топа: {e}")
-
+        logging.error(f"Ошибка в top_user: {e}")
 
 # Обновленный профиль
 @dp.callback_query(F.data == PROFILE)
