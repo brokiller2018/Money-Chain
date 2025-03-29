@@ -28,6 +28,7 @@ BUY_MENU = "buy_menu"
 CHECK_SUB = "check_sub_"
 SEARCH_USER = "search_user"
 DB_FILE = "users_db.json"
+TOP_OWNERS = "top_owners"
 
 # Инициализация
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -76,8 +77,9 @@ def main_keyboard():
         ],
         [
             InlineKeyboardButton(text="👥 Купить раба", callback_data=BUY_MENU),
-            InlineKeyboardButton(text="🔗 Рефералка", callback_data=REF_LINK)
-        ]
+            InlineKeyboardButton(text="🏆 Топ владельцев", callback_data=TOP_OWNERS)
+        ],
+        [InlineKeyboardButton(text="🔗 Рефералка", callback_data=REF_LINK)]
     ])
 
 def upgrades_keyboard(user_id):
@@ -373,6 +375,49 @@ async def buy_menu_handler(callback: types.CallbackQuery):
 async def main_menu_handler(callback: types.CallbackQuery):
     await callback.message.edit_text("🔮 Главное меню:", reply_markup=main_keyboard())
     await callback.answer()
+
+@dp.callback_query(F.data == TOP_OWNERS)
+async def top_owners_handler(callback: types.CallbackQuery):
+    try:
+        # Сортируем по общему доходу (пассивка + работа)
+        sorted_users = sorted(
+            users.items(),
+            key=lambda x: x[1].get("total_income", 0),
+            reverse=True
+        )[:15]  # Топ-15
+        
+        text = "🏆 <b>Топ рабовладельцев по доходу:</b>\n\n"
+        text += "<i>Рейтинг учитывает всех рабов и их уровни</i>\n\n"
+        
+        for idx, (user_id, user_data) in enumerate(sorted_users, 1):
+            username = user_data.get("username", "Unknown")
+            slaves = user_data.get("slaves", [])
+            total_income = user_data.get("total_income", 0)
+            
+            # Расчет эффективности (доход на раба)
+            efficiency = total_income / len(slaves) if slaves else 0
+            
+            text += (
+                f"{idx}. @{username}\n"
+                f"   ▸ Рабов: {len(slaves)}\n"
+                f"   ▸ Общий доход: {total_income:.1f}₽\n"
+                f"   ▸ Эффективность: {efficiency:.1f}₽/раба\n\n"
+            )
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)]
+                ]
+            ),
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logging.error(f"Top owners error: {e}", exc_info=True)
+        await callback.answer("🌀 Ошибка загрузки топа", show_alert=True)
+    finally:
+        await callback.answer()
 
 @dp.callback_query(F.data.startswith(UPGRADE_PREFIX))
 async def upgrade_handler(callback: types.CallbackQuery):
