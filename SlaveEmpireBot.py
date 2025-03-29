@@ -34,7 +34,10 @@ TOP_OWNERS = "top_owners"
 BUYOUT_PREFIX = "buyout_"
 SHIELD_PREFIX = "shield_"
 SHACKLES_PREFIX = "shackles_"
-
+MAX_SLAVE_LEVEL = 15
+DAILY_WORK_LIMIT = 10
+MAX_BARRACKS_LEVEL = 10
+DAILY_WORK_LIMIT = 7
 # Инициализация
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 storage = MemoryStorage()
@@ -48,27 +51,31 @@ user_search_cache = {}
 upgrades = {
     "storage": {
         "name": "📦 Склад",
-        "base_price": 500,
-        "income_bonus": 10,
-        "description": "+10 монет/мин к пассивному доходу"
+        "base_price": 300, 
+        "income_bonus": 5,
+        "price_multiplier": 1.3
+        "description": "+8 монет/мин к пассивному доходу"
     },
     "whip": {
         "name": "⛓ Кнуты", 
-        "base_price": 1000,
-        "income_bonus": 25,
-        "description": "+25% к доходу от работы"
+        "base_price": 800,
+        "income_bonus": 0.18,  # +18% к работе (было +25%)
+        "price_multiplier": 1.3,
+        "description": "+18% к доходу от работы"
     },
     "food": {
         "name": "🍗 Еда",
-        "base_price": 2000,
-        "income_bonus": 50,
-        "description": "-10% к времени ожидания работы"
+        "base_price": 1500,
+        "income_bonus": 0.08,  # -8% времени работы за уровень
+        "price_multiplier": 1.5,
+        "description": "-8% к времени ожидания работы"
     },
     "barracks": {
         "name": "🏠 Бараки",
-        "base_price": 5000,
-        "income_bonus": 100,
-        "description": "+5 к лимиту рабов"
+        "base_price": 3000,
+        "income_bonus": 2,  # +2 к лимиту рабов
+        "price_multiplier": 1.6,
+        "description": "+2 к лимиту рабов"
     }
 }
 
@@ -216,6 +223,14 @@ def load_db():
         if conn:
             conn.close()
 
+def passive_income(user):
+    base = 1 + user["upgrades"].get("storage", 0) * 5
+    slaves = sum(
+        50 * (1 + 0.2 * slave_level(slave_id)) 
+        for slave_id in user.get("slaves", [])
+    )
+    return base + slaves * (1 + 0.05 * user["upgrades"].get("barracks", 0))
+
 def calculate_shield_price(user_id):
     user = users[user_id]
     # Базовый доход (1 + склад) в минуту
@@ -227,9 +242,9 @@ def calculate_shield_price(user_id):
         if slave_id in users
     )
     # Цена = 50% дохода за 12 часов, округлено до 10
-    price = round((passive_per_min * 60 * 12 * 0.5) / 10) * 10
-    # Ограничения
-    price = max(300, min(5000, price))
+    base_price = passive_per_min * 60 * 6  # 6 часов
+    price = base_price * (1.1 ** shield_level) 
+    price = max(500, min(8000, price))  # Новые лимиты
     # Скидка за первую покупку
     if user.get("shop_purchases", 0) == 0:
         price = int(price * 0.7)
@@ -254,6 +269,12 @@ def calculate_shackles_price(owner_id):
     
     # 4. Ограничиваем диапазон (300–10 000₽)
     return max(300, min(10_000, price))
+
+def slave_price(slave_data: dict) -> int:
+    """Рассчитывает цену раба на основе его уровня"""
+    base_price = slave_data.get("base_price", 100)
+    level = slave_data.get("slave_level", 0)
+    return int(200 * (1.35 ** min(level, MAX_SLAVE_LEVEL)))
 
 # Вспомогательные функции
 async def check_subscription(user_id: int):
@@ -284,7 +305,8 @@ async def passive_income_task():
                     if slave_id in users:
                         slave = users[slave_id]
                         slave_income = 100 * (1 + 0.3 * slave.get("slave_level", 0)) * mins_passed
-                        tax = int(slave_income * 0.2)  # Налог 20%
+                        tax_rate = min(0.1 + 0.05 * owner_level, 0.3)
+                        tax = int(slave_income * tax_rate)
                         slave["balance"] += slave_income - tax
                         slaves_income += tax  # Налог идёт владельцу
                 
@@ -349,7 +371,9 @@ async def start_command(message: Message):
         
         # Начисляем бонус рефералу
         if referrer_id and referrer_id in users:
-            bonus = 50  # 10% от стартового баланса
+            if referrer_id not in user.get("referrals", []):
+            user["referrals"].append(referrer_id)
+            bonus = min(100, int(new_user["balance"] * 0.05))
             users[referrer_id]["balance"] += bonus
             users[referrer_id]["total_income"] += bonus
             try:
@@ -440,13 +464,16 @@ async def work_handler(callback: types.CallbackQuery):
         return
     
     now = datetime.now()
-    cooldown = timedelta(minutes=20)
+    cooldown = timedelta(minutes=30)  # Увеличен кулдаун
     
     if user["last_work"] and (now - user["last_work"]) < cooldown:
         remaining = (user["last_work"] + cooldown - now).seconds // 60
         await callback.answer(f"⏳ Подождите еще {remaining} минут", show_alert=True)
         return
-    
+    if user.get("work_count", 0) >= DAILY_WORK_LIMIT:
+        await callback.answer("❌ Достигнут дневной лимит!")
+        return
+    user["work_count"] = user.get("work_count", 0) + 1
     # Рассчитываем текущий пассивный доход в минуту
     passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 10
     passive_per_min += sum(
@@ -457,7 +484,7 @@ async def work_handler(callback: types.CallbackQuery):
     
     # Бонус = 20 минут пассивного дохода * множитель кнутов
     whip_bonus = 1 + user.get("upgrades", {}).get("whip", 0) * 0.25
-    work_bonus = passive_per_min * 20 * whip_bonus
+    work_bonus = passive_per_min * 10 * (1 + whip_bonus)
     
     user["balance"] += work_bonus
     user["total_income"] += work_bonus
@@ -821,7 +848,6 @@ async def buy_shackles(callback: types.CallbackQuery):
     await select_shackles(callback)  # Возврат к выбору
 
 @dp.callback_query(F.data.startswith(SLAVE_PREFIX))
-@dp.callback_query(F.data.startswith(SLAVE_PREFIX))
 async def buy_slave_handler(callback: types.CallbackQuery):
     try:
         buyer_id = callback.from_user.id
@@ -901,11 +927,8 @@ async def buy_slave_handler(callback: types.CallbackQuery):
 
         # Обновление данных раба
         slave["owner"] = buyer_id
-        slave["slave_level"] = min(  # Ограничение уровня
-            slave.get("slave_level", 0) + 1, 
-            10  # Максимальный уровень
-        )
-        slave["price"] = int(slave.get("base_price", 100) * (1.5 ** slave["slave_level"]))
+        slave["slave_level"] = min(level + 1, MAX_SLAVE_LEVEL)
+        slave["price"] = slave_price(slave)
         slave["enslaved_date"] = datetime.now()
 
         # Формирование сообщения
@@ -1053,10 +1076,12 @@ async def profile_handler(callback: types.CallbackQuery):
         
         # Формируем текст профиля
         text = [
-            f"👑 <b>Профиль @{user.get('username', 'unknown')}</b>",
+            f" 👑 <b>Профиль @{user.get('username', 'unknown')}</b>",
             f"▸ 💰 Баланс: {user.get('balance', 0):.1f}₽",
             f"▸ 👥 Уровень раба: {user.get('slave_level', 0)}",
             f"▸ 🛠 Улучшения: {sum(user.get('upgrades', {}).values())}",
+            f"▸ Лимит рабов: {5 + 2*barracks_level}/{5 + 2*MAX_BARRACKS_LEVEL}"
+            f"▸ Налог: {10 + 2*whip_level}%"
         ]
         
         if user.get("owner"):
