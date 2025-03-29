@@ -449,66 +449,78 @@ async def show_random_slaves(callback: types.CallbackQuery):
             await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
             return
 
-        # 1. Подготовка списка доступных рабов
         available = []
         for slave_id, slave_data in users.items():
-            # Проверка 1: Нельзя купить самого себя
+            # Проверка структуры данных
+            if not isinstance(slave_data, dict):
+                continue
+
+            # Основные проверки
             if slave_id == user_id:
                 continue
                 
-            # Проверка 2: Уже принадлежит нам
             if slave_data.get('owner') == user_id:
                 continue
-                
-            # Проверка 3: Активен ли щит
+
+            # Проверка щита
             shield = slave_data.get('shield_active')
             if shield:
                 if isinstance(shield, str):
                     try:
                         shield = datetime.fromisoformat(shield)
-                    except ValueError:
+                    except:
                         shield = None
                 if shield and shield > datetime.now():
                     continue
-            
-            # Проверка 4: Есть ли username
+
             if not slave_data.get('username'):
                 continue
                 
             available.append((slave_id, slave_data))
 
-        # 2. Проверка минимального количества
-        if len(available) < 1:  # Минимум 3 доступных раба
-            await callback.answer("😢 Слишком мало доступных рабов", show_alert=True)
+        # Улучшенная проверка доступности
+        if not available:
+            await callback.answer("😢 Нет доступных рабов", show_alert=True)
             return
+            
+        # Безопасная выборка
+        try:
+            selected = random.sample(
+                available, 
+                min(10, len(available))
+        except ValueError:
+            selected = available
 
-        # 3. Выборка 10 случайных или всех, если меньше 10
-        selected = random.sample(available, min(10, len(available)))
-        
-        # 4. Сортировка по уровню (чем выше уровень - тем выше в списке)
-        selected.sort(key=lambda x: x[1].get('slave_level', 0), reverse=True)
+        # Сортировка по цене
+        selected.sort(key=lambda x: x[1].get('price', 100))
 
-        # 5. Формирование сообщения
+        # Формирование кнопок
         buttons = []
         for slave_id, slave_data in selected:
-            buttons.append([
-                InlineKeyboardButton(
-                    text=f"👤 Ур.{slave_data.get('slave_level', 0)} @{slave_data['username']} - {slave_data.get('price', 100)}₽",
-                    callback_data=f"{SLAVE_PREFIX}{slave_id}"
-                )
-            ])
+            btn_text = (
+                f"👤 Ур.{slave_data.get('slave_level', 0)} "
+                f"@{slave_data['username']} - "
+                f"{slave_data.get('price', 100)}₽"
+            )
+            buttons.append([InlineKeyboardButton(
+                text=btn_text,
+                callback_data=f"{SLAVE_PREFIX}{slave_id}"
+            )])
 
-        buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)])
+        buttons.append([InlineKeyboardButton(
+            text="🔙 Назад",
+            callback_data=BUY_MENU
+        )])
 
         await callback.message.edit_text(
-            "🎲 Случайные доступные рабы:",
+            "🎲 Доступные рабы:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
         )
         await callback.answer()
 
     except Exception as e:
-        logging.error(f"Ошибка в random_slaves: {e}", exc_info=True)
-        await callback.answer("⚠️ Критическая ошибка при поиске", show_alert=True)
+        logging.error(f"Ошибка: {e}", exc_info=True)
+        await callback.answer("⚠️ Ошибка при поиске", show_alert=True)
     
     # Функция для расчета рейтинга
     def get_slave_score(slave_data):
