@@ -241,7 +241,8 @@ def update_user(user_id: int, user_data: dict):
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE bot_users SET data = %s WHERE user_id = %s",
-                (Json(serialize_user_data(user)), user_id)
+                (Json(serialize_user_data(user_data)), user_id)  # Исправлено здесь
+            )
             conn.commit()
     except Exception as e:
         logging.error(f"Ошибка обновления пользователя {user_id}: {e}")
