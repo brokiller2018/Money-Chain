@@ -240,7 +240,7 @@ def calculate_shield_price(user_id):
     passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 10
     # Доход от рабов в минуту
     passive_per_min += sum(
-        100 * (1 + 0.3 * users[slave_id].get("slave_level", 0)
+        100 * (1 + 0.3 * users[slave_id].get("slave_level", 0))
         for slave_id in user.get("slaves", [])
         if slave_id in users
     )
