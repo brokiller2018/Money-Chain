@@ -626,6 +626,7 @@ async def shop_handler(callback: types.CallbackQuery):
         await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
         return
 
+    # Расчет цены щита
     shield_price = calculate_shield_price(user_id)
     shield_status = "🟢 Активен" if user.get("shield_active") and user["shield_active"] > datetime.now() else "🔴 Неактивен"
     
