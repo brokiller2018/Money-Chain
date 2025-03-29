@@ -2,6 +2,8 @@ import logging
 import asyncio
 import json
 import os
+import psycopg2
+from psycopg2.extras import Json
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
@@ -10,6 +12,7 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram import F
 from datetime import datetime, timedelta
+
 
 # Настройки
 TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
@@ -27,7 +30,6 @@ REF_LINK = "ref_link"
 BUY_MENU = "buy_menu"
 CHECK_SUB = "check_sub_"
 SEARCH_USER = "search_user"
-DB_FILE = "users_db.json"
 TOP_OWNERS = "top_owners"
 
 # Инициализация
@@ -82,6 +84,9 @@ def main_keyboard():
         [InlineKeyboardButton(text="🔗 Рефералка", callback_data=REF_LINK)]
     ])
 
+def get_db_connection():
+    return psycopg2.connect(os.getenv("DATABASE_URL"))
+    
 def upgrades_keyboard(user_id):
     buttons = []
     for upgrade_id, data in upgrades.items():
@@ -103,61 +108,73 @@ def buy_menu_keyboard():
     ])
     
 def save_db():
-    # Сохраняем данные в файл
-    with open(DB_FILE, 'w', encoding='utf-8') as f:
-        # Конвертируем datetime в строку для сохранения
-        db_to_save = {}
-        for user_id, user_data in users.items():
-            db_to_save[user_id] = {}
-            for key, value in user_data.items():
-                if isinstance(value, datetime):
-                    db_to_save[user_id][key] = value.isoformat()
-                else:
-                    db_to_save[user_id][key] = value
-        json.dump(db_to_save, f, ensure_ascii=False, indent=4)
-    
-    # Устанавливаем права на файл после сохранения (только если файл существует)
-    if os.path.exists(DB_FILE):
-        try:
-            os.chmod(DB_FILE, 0o644)  # Права: владелец - чтение/запись, остальные - только чтение
-        except Exception as e:
-            logging.error(f"Ошибка при установке прав на файл {DB_FILE}: {e}")
+    conn = None
+    try:
+        conn = get_db_connection()
+        with conn:
+            with conn.cursor() as cur:
+                # Создаем таблицу (если её нет)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS bot_users (
+                        user_id BIGINT PRIMARY KEY,
+                        data JSONB NOT NULL,
+                        last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    )
+                """)
+                
+                # Сохраняем данные всех пользователей
+                for user_id, user_data in users.items():
+                    cur.execute("""
+                        INSERT INTO bot_users (user_id, data)
+                        VALUES (%s, %s)
+                        ON CONFLICT (user_id) 
+                        DO UPDATE SET 
+                            data = EXCLUDED.data,
+                            last_updated = NOW()
+                    """, (user_id, Json(user_data)))
+        
+    except psycopg2.Error as e:
+        logging.error(f"Database error in save_db: {e}")
+        raise
+    finally:
+        if conn:
+            conn.close()
 
 def load_db():
-    # Если файла нет - создаем пустой с правильными правами
-    if not os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, 'w', encoding='utf-8') as f:
-                json.dump({}, f, ensure_ascii=False, indent=4)
-            os.chmod(DB_FILE, 0o644)  # Права: владелец - чтение/запись, остальные - только чтение
-            return {}
-        except Exception as e:
-            logging.error(f"Ошибка при создании файла БД: {e}")
-            return {}
-
-    # Чтение существующей БД
+    conn = None
     try:
-        with open(DB_FILE, 'r', encoding='utf-8') as f:
-            db_loaded = json.load(f)
-    except Exception as e:
-        logging.error(f"Ошибка чтения БД: {e}")
+        conn = get_db_connection()
+        with conn:
+            with conn.cursor() as cur:
+                # Проверяем существование таблицы
+                cur.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'bot_users'
+                    )
+                """)
+                table_exists = cur.fetchone()[0]
+                
+                if not table_exists:
+                    return {}
+                
+                # Загружаем данные
+                cur.execute("SELECT user_id, data FROM bot_users")
+                rows = cur.fetchall()
+                
+                loaded_users = {}
+                for user_id, data in rows:
+                    loaded_users[user_id] = data
+                
+                return loaded_users
+                
+    except psycopg2.Error as e:
+        logging.error(f"Database error in load_db: {e}")
         return {}
-
-    # Восстанавливаем datetime объекты
-    restored_db = {}
-    for user_id, user_data in db_loaded.items():
-        try:
-            restored_db[int(user_id)] = {}
-            for key, value in user_data.items():
-                if key in ['last_passive', 'last_work'] and value is not None:
-                    restored_db[int(user_id)][key] = datetime.fromisoformat(value)
-                else:
-                    restored_db[int(user_id)][key] = value
-        except Exception as e:
-            logging.error(f"Ошибка обработки пользователя {user_id}: {e}")
-            continue
-
-    return restored_db
+    finally:
+        if conn:
+            conn.close()
+    
 # Вспомогательные функции
 async def check_subscription(user_id: int):
     try:
@@ -235,7 +252,6 @@ async def start_command(message: Message):
     "💰 <b>Базовая пассивка:</b> 1₽/мин"
 )
         save_db() 
-        print(f"Путь к файлу: {os.path.abspath(DB_FILE)}")
         
         await message.answer(welcome_msg, reply_markup=main_keyboard(), parse_mode=ParseMode.HTML)
     else:
