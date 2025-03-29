@@ -20,7 +20,7 @@ TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
 CHANNEL_ID = "@memok_da"
 CHANNEL_LINK = "https://t.me/memok_da"
 DATABASE_URL = os.getenv("DATABASE_URL")
-pool = ThreadedConnectionPool(1, 20, dsn=DATABASE_URL)
+pool = await create_pool(DATABASE_URL)
 
 # Константы
 UPGRADE_PREFIX = "upg_"
@@ -437,7 +437,9 @@ async def start_command(message: Message):
             "👑 <b>ДОБРО ПОЖАЛОВАТЬ В РАБОВЛАДЕЛЬЧЕСКУЮ ИМПЕРИЮ!</b>\n\n"
             "⚡️ <b>Основные возможности:</b>\n"
             "▸ 💼 Бонусная работа (раз в 20 мин)\n"
-            "▸ 🛠 Улучшай свои владения\n")
+            "▸ 🛠 Улучшай свои владения\n"
+        )
+        await message.answer(welcome_msg)
 
 @dp.callback_query(F.data == "random_slaves")
 async def show_random_slaves(callback: types.CallbackQuery):
