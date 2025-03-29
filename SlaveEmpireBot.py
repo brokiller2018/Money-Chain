@@ -1150,7 +1150,7 @@ async def buy_slave_handler(callback: types.CallbackQuery):
             buyer.setdefault("slaves", []).append(slave_id)
             cur.execute(
                 "UPDATE bot_users SET data = %s WHERE user_id = %s",
-                (Json(serialize_user_data(buyer)), buyer_id)
+                (Json(serialize_user_data(buyer)), buyer_id))
             
             # Обновляем раба
             slave["owner"] = buyer_id
