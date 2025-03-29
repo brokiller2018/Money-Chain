@@ -220,7 +220,7 @@ def create_user(user_id: int, username: str, referrer_id: int = None) -> dict:
         conn.close()
 
 
-def (user_id: int) -> dict | None:
+def get_user(user_id: int) -> dict | None:
     """Загружает данные пользователя из PostgreSQL"""
     conn = get_db_connection()
     try:
