@@ -408,11 +408,6 @@ async def start_command(message: Message):
     else:
         await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
 
-@dp.message(F.text & ~F.command)
-async def text_messages_handler(message: Message):
-    """Обрабатывает только текстовые сообщения, не являющиеся командами"""
-    # Игнорируем все обычные сообщения
-    return
 
 
 @dp.callback_query(F.data == "random_slaves")
@@ -1154,6 +1149,12 @@ async def handle_top_user_command(message: types.Message):
     except Exception as e:
         print(f"Ошибка в /top_user: {e}")  # Логирование ошибки
         await message.reply("⚠️ Произошла ошибка при формировании топа")
+
+@dp.message(F.text & ~F.command)
+async def text_messages_handler(message: Message):
+    """Обрабатывает только текстовые сообщения, не являющиеся командами"""
+    # Игнорируем все обычные сообщения
+    return
 # Обновленный профиль
 @dp.callback_query(F.data == PROFILE)
 async def profile_handler(callback: types.CallbackQuery):
