@@ -112,13 +112,19 @@ def buy_menu_keyboard():
         [InlineKeyboardButton(text="🔍 Поиск по юзернейму", callback_data=SEARCH_USER)],
         [InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)]
     ])
-
+    
 def serialize_user_data(user_data: dict) -> dict:
     """Преобразуем datetime объекты в строки для JSON"""
     serialized = {}
     for key, value in user_data.items():
         if isinstance(value, datetime):
             serialized[key] = value.isoformat()
+        elif isinstance(value, dict) and key == "shackles":
+            # Сериализуем кандалы
+            serialized[key] = {
+                str(slave_id): end_time.isoformat() 
+                for slave_id, end_time in value.items()
+            }
         else:
             serialized[key] = value
     return serialized
@@ -127,11 +133,17 @@ def deserialize_user_data(data: dict) -> dict:
     """Восстанавливаем datetime из строк"""
     deserialized = {}
     for key, value in data.items():
-        if key in ['last_passive', 'last_work'] and value:
+        if key in ['last_passive', 'last_work', 'shield_active'] and value:
             try:
                 deserialized[key] = datetime.fromisoformat(value)
             except (TypeError, ValueError):
-                deserialized[key] = datetime.now()
+                deserialized[key] = None
+        elif key == "shackles" and isinstance(value, dict):
+            # Десериализуем кандалы
+            deserialized[key] = {
+                int(slave_id): datetime.fromisoformat(end_time)
+                for slave_id, end_time in value.items()
+            }
         else:
             deserialized[key] = value
     return deserialized
@@ -628,7 +640,18 @@ async def shop_handler(callback: types.CallbackQuery):
 
     # Расчет цены щита
     shield_price = calculate_shield_price(user_id)
-    shield_status = "🟢 Активен" if user.get("shield_active") and user["shield_active"] > datetime.now() else "🔴 Неактивен"
+    
+    # Обработка shield_active с проверкой типа данных
+    shield_active = user.get("shield_active")
+    if isinstance(shield_active, str):
+        try:
+            shield_active = datetime.fromisoformat(shield_active)
+            user["shield_active"] = shield_active  # Обновляем значение в словаре
+        except (ValueError, TypeError):
+            shield_active = None
+    
+    # Проверка активности щита
+    shield_status = "🟢 Активен" if shield_active and shield_active > datetime.now() else "🔴 Неактивен"
     
     text = [
         "🛒 <b>Магический рынок</b>",
@@ -715,7 +738,16 @@ async def buy_shield(callback: types.CallbackQuery):
     user = users.get(user_id)
     price = int(callback.data.replace(SHIELD_PREFIX, ""))
     
-    if user.get("shield_active") and user["shield_active"] > datetime.now():
+    # Проверяем тип данных
+    current_shield = user.get("shield_active")
+    if current_shield and isinstance(current_shield, str):
+        try:
+            current_shield = datetime.fromisoformat(current_shield)
+            user["shield_active"] = current_shield
+        except ValueError:
+            current_shield = None
+    
+    if current_shield and current_shield > datetime.now():
         await callback.answer("❌ У вас уже есть активный щит!", show_alert=True)
         return
         
@@ -729,8 +761,8 @@ async def buy_shield(callback: types.CallbackQuery):
     save_db()
     
     await callback.answer(f"🛡 Щит активирован до {user['shield_active'].strftime('%H:%M')}!", show_alert=True)
-    await shop_handler(callback)  # Обновляем магазин
-
+    await shop_handler(callback)
+    
 @dp.callback_query(F.data == "select_shackles")
 async def select_shackles(callback: types.CallbackQuery):
     user_id = callback.from_user.id
