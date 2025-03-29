@@ -1159,7 +1159,7 @@ async def profile_handler(callback: types.CallbackQuery):
         buyout_price = 0
         if user.get("owner"):
             base_price = user.get("base_price", 100)
-            buyout_price = int((base_price + user["balance"] * 0.1) * (1 + user.get("slave_level", 0) * 0.5)
+            buyout_price = int((base_price + user["balance"] * 0.1) * (1 + user.get("slave_level", 0) * 0.5))
             buyout_price = max(100, min(10000, buyout_price))
         
         # Получаем уровни улучшений
