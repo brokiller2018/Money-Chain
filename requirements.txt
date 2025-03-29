@@ -1,4 +1,3 @@
 aiogram==3.19.0
 asyncio
-asyncpg
-
+psycopg2-binary
