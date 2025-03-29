@@ -20,7 +20,7 @@ TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
 CHANNEL_ID = "@memok_da"
 CHANNEL_LINK = "https://t.me/memok_da"
 DATABASE_URL = os.getenv("DATABASE_URL")
-pool = await create_pool(DATABASE_URL)
+pool = ThreadedConnectionPool(1, 20, dsn=DATABASE_URL)
 
 # Константы
 UPGRADE_PREFIX = "upg_"
@@ -216,21 +216,6 @@ def create_user(user_id: int, username: str, referrer_id: int = None) -> dict:
     except Exception as e:
         logging.error(f"Ошибка создания пользователя {user_id}: {e}")
         raise
-    finally:
-        conn.close()
-
-
-def get_user(user_id: int) -> dict | None:
-    """Загружает данные пользователя из PostgreSQL"""
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT data FROM bot_users WHERE user_id = %s", (user_id,))
-            result = cur.fetchone()
-            return deserialize_user_data(result[0]) if result else None
-    except Exception as e:
-        logging.error(f"Ошибка загрузки пользователя {user_id}: {e}")
-        return None
     finally:
         conn.close()
 
