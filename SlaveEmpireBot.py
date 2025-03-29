@@ -375,10 +375,10 @@ async def start_command(message: Message):
         # Начисляем бонус рефералу
         if referrer_id and referrer_id in users:
             if referrer_id not in user.get("referrals", []):
-            user["referrals"].append(referrer_id)
-            bonus = min(100, int(new_user["balance"] * 0.05))
-            users[referrer_id]["balance"] += bonus
-            users[referrer_id]["total_income"] += bonus
+                user["referrals"].append(referrer_id)
+                bonus = min(100, int(new_user["balance"] * 0.05))
+                users[referrer_id]["balance"] += bonus
+                users[referrer_id]["total_income"] += bonus
             try:
                 await bot.send_message(
                     referrer_id,
