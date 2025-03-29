@@ -38,6 +38,8 @@ MAX_SLAVE_LEVEL = 15
 DAILY_WORK_LIMIT = 10
 MAX_BARRACKS_LEVEL = 10
 DAILY_WORK_LIMIT = 7
+MIN_SLAVES_FOR_RANDOM = 3 
+
 # Инициализация
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 storage = MemoryStorage()
@@ -117,6 +119,7 @@ def upgrades_keyboard(user_id):
 def buy_menu_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔍 Поиск по юзернейму", callback_data=SEARCH_USER)],
+        [InlineKeyboardButton(text="🎲 Случайные рабы (Топ-10)", callback_data="random_slaves")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)]
     ])
     
@@ -403,6 +406,49 @@ async def start_command(message: Message):
         await message.answer(welcome_msg, reply_markup=main_keyboard(), parse_mode=ParseMode.HTML)
     else:
         await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
+
+@dp.callback_query(F.data == "random_slaves")
+async def show_random_slaves(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    
+    # Фильтруем свободных рабов или чужих рабов (но не себя и не своих)
+    available_slaves = [
+        (uid, data) for uid, data in users.items() 
+        if uid != user_id and (data.get("owner") is None or data["owner"] != user_id)
+    ]
+    
+    # Функция для расчета рейтинга
+    def get_slave_score(slave_data):
+        level = slave_data.get("slave_level", 0)
+        price = slave_data.get("price", 100)
+        return (level * 2) - (price / 100)  # Чем выше уровень и ниже цена - тем лучше
+    
+    # Сортируем по рейтингу привлекательности и берём топ-10
+    sorted_slaves = sorted(
+        available_slaves, 
+        key=lambda x: get_slave_score(x[1]),
+        reverse=True  # Сортируем по убыванию рейтинга
+    )[:10]
+
+    if not sorted_slaves:
+        await callback.answer("😢 Нет доступных рабов", show_alert=True)
+        return
+
+    buttons = []
+    for slave_id, slave_data in sorted_slaves:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"👤 Ур.{slave_data.get('slave_level', 0)} @{slave_data['username']} - {slave_data['price']}₽ (Рейтинг: {get_slave_score(slave_data):.1f})",
+                callback_data=f"{SLAVE_PREFIX}{slave_id}"
+            )
+        ])
+    
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)])
+    
+    await callback.message.edit_text(
+        "🎲 Доступные рабы (Топ-10 по рейтингу привлекательности):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
+    )
 
 @dp.callback_query(F.data.startswith(CHECK_SUB))
 async def check_sub_callback(callback: types.CallbackQuery):
