@@ -106,14 +106,36 @@ def buy_menu_keyboard():
         [InlineKeyboardButton(text="🔍 Поиск по юзернейму", callback_data=SEARCH_USER)],
         [InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)]
     ])
-    
+
+def serialize_user_data(user_data: dict) -> dict:
+    """Преобразуем datetime объекты в строки для JSON"""
+    serialized = {}
+    for key, value in user_data.items():
+        if isinstance(value, datetime):
+            serialized[key] = value.isoformat()
+        else:
+            serialized[key] = value
+    return serialized
+
+def deserialize_user_data(data: dict) -> dict:
+    """Восстанавливаем datetime из строк"""
+    deserialized = {}
+    for key, value in data.items():
+        if key in ['last_passive', 'last_work'] and value:
+            try:
+                deserialized[key] = datetime.fromisoformat(value)
+            except (TypeError, ValueError):
+                deserialized[key] = datetime.now()
+        else:
+            deserialized[key] = value
+    return deserialized
+
 def save_db():
     conn = None
     try:
         conn = get_db_connection()
         with conn:
             with conn.cursor() as cur:
-                # Создаем таблицу (если её нет)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS bot_users (
                         user_id BIGINT PRIMARY KEY,
@@ -122,8 +144,9 @@ def save_db():
                     )
                 """)
                 
-                # Сохраняем данные всех пользователей
+                # Сериализуем данные перед сохранением
                 for user_id, user_data in users.items():
+                    serialized_data = serialize_user_data(user_data)
                     cur.execute("""
                         INSERT INTO bot_users (user_id, data)
                         VALUES (%s, %s)
@@ -131,7 +154,7 @@ def save_db():
                         DO UPDATE SET 
                             data = EXCLUDED.data,
                             last_updated = NOW()
-                    """, (user_id, Json(user_data)))
+                    """, (user_id, Json(serialized_data)))
         
     except psycopg2.Error as e:
         logging.error(f"Database error in save_db: {e}")
@@ -146,7 +169,6 @@ def load_db():
         conn = get_db_connection()
         with conn:
             with conn.cursor() as cur:
-                # Проверяем существование таблицы
                 cur.execute("""
                     SELECT EXISTS (
                         SELECT FROM information_schema.tables 
@@ -158,13 +180,13 @@ def load_db():
                 if not table_exists:
                     return {}
                 
-                # Загружаем данные
                 cur.execute("SELECT user_id, data FROM bot_users")
                 rows = cur.fetchall()
                 
                 loaded_users = {}
                 for user_id, data in rows:
-                    loaded_users[user_id] = data
+                    # Десериализуем данные при загрузке
+                    loaded_users[user_id] = deserialize_user_data(data)
                 
                 return loaded_users
                 
