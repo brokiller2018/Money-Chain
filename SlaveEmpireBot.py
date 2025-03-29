@@ -240,13 +240,15 @@ def calculate_shield_price(user_id):
     passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 10
     # Доход от рабов в минуту
     passive_per_min += sum(
-        100 * (1 + 0.3 * users[slave_id].get("slave_level", 0))
+        100 * (1 + 0.3 * users[slave_id].get("slave_level", 0)
         for slave_id in user.get("slaves", [])
         if slave_id in users
     )
     # Цена = 50% дохода за 12 часов, округлено до 10
     base_price = passive_per_min * 60 * 6  # 6 часов
-    price = base_price * (1.1 ** shield_level) 
+    # Получаем количество покупок щита
+    shop_purchases = user.get("shop_purchases", 0)
+    price = base_price * (1.1 ** shop_purchases) 
     price = max(500, min(8000, price))  # Новые лимиты
     # Скидка за первую покупку
     if user.get("shop_purchases", 0) == 0:
