@@ -18,8 +18,6 @@ from datetime import datetime, timedelta
 TOKEN = "8076628423:AAEkp4l3BYkl-6lwz8VAyMw0h7AaAM7J3oM"
 CHANNEL_ID = "@memok_da"
 CHANNEL_LINK = "https://t.me/memok_da"
-users.clear()  # Очищает словарь
-print("Локальные данные стерты")
 # Константы
 UPGRADE_PREFIX = "upg_"
 SLAVE_PREFIX = "slv_"
@@ -1220,6 +1218,9 @@ async def main():
         logger.info("Завершение работы...")
         await on_shutdown()
         logger.info("Бот успешно остановлен")
+
+users.clear()  # Очищает словарь
+print("Локальные данные стерты")
 if __name__ == "__main__":
     try:
         # Для Windows нужно установить специальный event loop
