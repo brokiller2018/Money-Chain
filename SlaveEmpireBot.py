@@ -409,6 +409,41 @@ async def start_command(message: Message):
         await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
 
 
+@dp.message(Command("top_user"))
+async def handle_top_user_command(message: types.Message):
+    print(f"Получена команда /top_user от {message.from_user.id}")  # Логирование
+    
+    try:
+        # Получаем топ-5 владельцев по количеству рабов
+        top_owners = sorted(
+            [u for u in users.values() if u.get('slaves')],
+            key=lambda x: len(x['slaves']),
+            reverse=True
+        )[:5]
+
+        if not top_owners:
+            await message.reply("😢 Пока нет ни одного рабовладельца")
+            return
+
+        # Формируем текст ответа
+        response = ["🏆 <b>Топ рабовладельцев:</b>\n"]
+        for i, owner in enumerate(top_owners, 1):
+            response.append(
+                f"{i}. @{owner.get('username', 'unknown')} "
+                f"- {len(owner['slaves'])} рабов"
+            )
+
+        await message.reply("\n".join(response), parse_mode="HTML")
+        
+    except Exception as e:
+        print(f"Ошибка в /top_user: {e}")  # Логирование ошибки
+        await message.reply("⚠️ Произошла ошибка при формировании топа")
+
+@dp.message(F.text & ~F.command)
+async def text_messages_handler(message: Message):
+    """Обрабатывает только текстовые сообщения, не являющиеся командами"""
+    # Игнорируем все обычные сообщения
+    return
 
 @dp.callback_query(F.data == "random_slaves")
 async def show_random_slaves(callback: types.CallbackQuery):
@@ -1119,42 +1154,6 @@ async def buyout_handler(callback: types.CallbackQuery):
     except Exception as e:
         logging.error(f"Buyout error: {e}", exc_info=True)
         await callback.answer("🌀 Произошла ошибка при выкупе", show_alert=True)
-
-@dp.message(Command("top_user"))
-async def handle_top_user_command(message: types.Message):
-    print(f"Получена команда /top_user от {message.from_user.id}")  # Логирование
-    
-    try:
-        # Получаем топ-5 владельцев по количеству рабов
-        top_owners = sorted(
-            [u for u in users.values() if u.get('slaves')],
-            key=lambda x: len(x['slaves']),
-            reverse=True
-        )[:5]
-
-        if not top_owners:
-            await message.reply("😢 Пока нет ни одного рабовладельца")
-            return
-
-        # Формируем текст ответа
-        response = ["🏆 <b>Топ рабовладельцев:</b>\n"]
-        for i, owner in enumerate(top_owners, 1):
-            response.append(
-                f"{i}. @{owner.get('username', 'unknown')} "
-                f"- {len(owner['slaves'])} рабов"
-            )
-
-        await message.reply("\n".join(response), parse_mode="HTML")
-        
-    except Exception as e:
-        print(f"Ошибка в /top_user: {e}")  # Логирование ошибки
-        await message.reply("⚠️ Произошла ошибка при формировании топа")
-
-@dp.message(F.text & ~F.command)
-async def text_messages_handler(message: Message):
-    """Обрабатывает только текстовые сообщения, не являющиеся командами"""
-    # Игнорируем все обычные сообщения
-    return
 # Обновленный профиль
 @dp.callback_query(F.data == PROFILE)
 async def profile_handler(callback: types.CallbackQuery):
