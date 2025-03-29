@@ -1159,7 +1159,7 @@ async def buy_slave_handler(callback: types.CallbackQuery):
             slave["enslaved_date"] = datetime.now().isoformat()
             cur.execute(
                 "UPDATE bot_users SET data = %s WHERE user_id = %s",
-                (Json(serialize_user_data(slave)), slave_id)
+                (Json(serialize_user_data(slave)), slave_id))
             
             conn.commit()
             
