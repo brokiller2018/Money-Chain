@@ -53,7 +53,7 @@ upgrades = {
         "name": "📦 Склад",
         "base_price": 300, 
         "income_bonus": 5,
-        "price_multiplier": 1.3
+        "price_multiplier": 1.3,
         "description": "+8 монет/мин к пассивному доходу"
     },
     "whip": {
