@@ -128,6 +128,7 @@ class Card:
 # Класс для игры в Blackjack
 class BlackjackGame:
     def __init__(self, user_id, bet):
+        self.start_time = datetime.now() 
         self.user_id = user_id
         self.bet = bet
         self.deck = self.create_deck()
@@ -182,7 +183,8 @@ class BlackjackGame:
                 await self.dealer_turn(message, bot)
                 
         await self.update_display(message, bot)
-        
+
+
     async def dealer_turn(self, message, bot):
         while self.calculate_hand(self.dealer_hand) < 17:
             self.dealer_hand.append(self.deal_card())
@@ -190,6 +192,7 @@ class BlackjackGame:
         
     async def end_game(self, result, message, bot):
         self.game_over = True
+
         player_value = self.calculate_hand(self.player_hand)
         dealer_value = self.calculate_hand(self.dealer_hand)
     
@@ -232,7 +235,21 @@ class BlackjackGame:
                 reply_markup=main_keyboard()
             )
         save_db()
-        
+
+    async def cleanup_games():
+    while True:
+        await asyncio.sleep(300)  # Каждые 5 минут
+        try:
+            expired = [
+                uid for uid, game in active_games.items()
+                if (datetime.now() - game.start_time).seconds > 1800  # 30 минут
+            ]
+            for uid in expired:
+                del active_games[uid]
+                logging.info(f"Удалена зависшая игра: {uid}")
+        except Exception as e:
+            logging.error(f"Ошибка очистки: {e}")
+
     async def update_display(self, message, bot):
         builder = InlineKeyboardBuilder()
         builder.add(
@@ -765,6 +782,16 @@ async def show_random_slaves(callback: types.CallbackQuery):
         await callback.answer("⚠️ Ошибка загрузки списка", show_alert=True)
 
     
+@dp.callback_query(F.data.startswith("bj_"))
+async def blackjack_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    logging.info(f"Попытка действия от {user_id}, игры: {active_games.keys()}")
+    
+    if user_id not in active_games:
+        logging.warning(f"Игра не найдена: {user_id}")
+        await callback.answer("Игра завершена ❌")
+        return
+
 @dp.callback_query(F.data.startswith(CHECK_SUB))
 async def check_sub_callback(callback: types.CallbackQuery):
     user_id = int(callback.data.replace(CHECK_SUB, ""))
@@ -1224,10 +1251,16 @@ async def blackjack_bet_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     bet = int(callback.data.split("_")[2])
     
+    # Создаем игру и сразу добавляем в active_games
     game = BlackjackGame(user_id, bet)
-    active_games[user_id] = game
-    await game.start_game()  # Вот здесь вызываем асинхронно
-    await game.update_display(callback.message, bot)
+    active_games[user_id] = game  # <-- Добавляем перед началом
+    
+    try:
+        await game.start_game()  # Теперь игра уже в active_games
+        await game.update_display(callback.message, bot)
+    except Exception as e:
+        del active_games[user_id]  # Удаляем при ошибке
+        logging.error(f"Ошибка запуска: {e}")
 
 @dp.callback_query(F.data == "select_shackles")
 async def select_shackles(callback: types.CallbackQuery):
@@ -1642,6 +1675,7 @@ async def on_startup():
     
     signal.signal(signal.SIGTERM, save_on_exit)
     signal.signal(signal.SIGINT, save_on_exit)
+    del active_games[self.user_id]
     
 async def on_shutdown():
     save_db() 
