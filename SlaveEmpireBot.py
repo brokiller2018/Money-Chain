@@ -152,18 +152,17 @@ class BlackjackGame:
         return value
         
     def deal_card(self):
-        return self.deck.pop(random.randint(0, len(self.deck)-1))
+        return self.deck.pop(random.randint(0, len(self.deck)-1)
         
     async def start_game(self):
-        self.deck = self.create_deck()
         random.shuffle(self.deck)
         self.player_hand = [self.deal_card(), self.deal_card()]
         self.dealer_hand = [self.deal_card(), self.deal_card()]
-    
-    # Первая проверка на блэкджек
-    if self.calculate_hand(self.player_hand) == 21:
-        await self.end_game('blackjack', None, None)
         
+        # Проверка на блэкджек после раздачи
+        if self.calculate_hand(self.player_hand) == 21:
+            await self.end_game('blackjack', None, None)
+            
     async def handle_action(self, action, message, bot):
         if self.game_over:
             return
@@ -206,8 +205,12 @@ class BlackjackGame:
                 
         user = users[self.user_id]
         
-        if result == 'win':
-            win_amount = int(self.bet * 1.5) if len(self.player_hand) == 2 and player_value == 21 else self.bet
+        if result == 'blackjack':
+            win_amount = int(self.bet * 2.5)  # 3:2 payout for blackjack
+            user["balance"] += win_amount
+            text = f"🎉 Blackjack! Вы выиграли {win_amount}₽!"
+        elif result == 'win':
+            win_amount = self.bet
             user["balance"] += win_amount
             text = f"🎉 Вы выиграли {win_amount}₽!"
         elif result == 'draw':
@@ -219,14 +222,15 @@ class BlackjackGame:
         if self.user_id in active_games:
             del active_games[self.user_id]
             
-        await message.edit_text(
-            text=(
-                f"{text}\n\n"
-                f"Ваши карты: {self.player_hand} ({player_value})\n"
-                f"Карты дилера: {self.dealer_hand} ({dealer_value})"
-            ),
-            reply_markup=main_keyboard()
-        )
+        if message:  # Если есть сообщение для редактирования
+            await message.edit_text(
+                text=(
+                    f"{text}\n\n"
+                    f"Ваши карты: {self.player_hand} ({player_value})\n"
+                    f"Карты дилера: {self.dealer_hand} ({dealer_value})"
+                ),
+                reply_markup=main_keyboard()
+            )
         save_db()
         
     async def update_display(self, message, bot):
@@ -1217,29 +1221,13 @@ async def stop_blackjack(message: types.Message):
 
 @dp.callback_query(F.data.startswith("bj_bet_"))
 async def blackjack_bet_handler(callback: types.CallbackQuery):
-    try:
-        user_id = callback.from_user.id
-        bet = int(callback.data.split("_")[2])
-        
-        if user_id in active_games:
-            await callback.answer("Завершите текущую игру!", show_alert=True)
-            return
-        
-        if users[user_id]["balance"] < bet:
-            await callback.answer("Недостаточно средств!", show_alert=True)
-            return
-        
-        # Создаем новую игру
-        game = BlackjackGame(user_id, bet)
-        game.start_game()
-        active_games[user_id] = game
-        
-        # Отправляем начальное сообщение
-        await game.update_display(callback.message, bot)
-        await callback.answer()
-    except Exception as e:
-        logging.error(f"Bet handler error: {e}", exc_info=True)
-        await callback.answer("⚠️ Ошибка в ставке", show_alert=True)
+    user_id = callback.from_user.id
+    bet = int(callback.data.split("_")[2])
+    
+    game = BlackjackGame(user_id, bet)
+    active_games[user_id] = game
+    await game.start_game()  # Вот здесь вызываем асинхронно
+    await game.update_display(callback.message, bot)
 
 @dp.callback_query(F.data == "select_shackles")
 async def select_shackles(callback: types.CallbackQuery):
