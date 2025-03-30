@@ -237,18 +237,18 @@ class BlackjackGame:
         save_db()
 
     async def cleanup_games():
-    while True:
-        await asyncio.sleep(300)  # Каждые 5 минут
-        try:
-            expired = [
-                uid for uid, game in active_games.items()
-                if (datetime.now() - game.start_time).seconds > 1800  # 30 минут
-            ]
-            for uid in expired:
-                del active_games[uid]
-                logging.info(f"Удалена зависшая игра: {uid}")
-        except Exception as e:
-            logging.error(f"Ошибка очистки: {e}")
+        while True:
+            await asyncio.sleep(300)  # Каждые 5 минут
+            try:
+                expired = [
+                    uid for uid, game in active_games.items()
+                    if (datetime.now() - game.start_time).seconds > 1800  # 30 минут
+                ]
+                for uid in expired:
+                    del active_games[uid]
+                    logging.info(f"Удалена зависшая игра: {uid}")
+            except Exception as e:
+                logging.error(f"Ошибка очистки: {e}")
 
     async def update_display(self, message, bot):
         builder = InlineKeyboardBuilder()
