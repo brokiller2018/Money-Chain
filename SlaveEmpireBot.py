@@ -434,6 +434,16 @@ async def start_command(message: Message):
     else:
         await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
 
+@dp.message(Command('fix_economy'))
+async def fix_economy(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    for user_id in users:
+        users[user_id]["balance"] = min(users[user_id]["balance"], 10_000)  # Макс 10к
+    
+    save_db()
+    await message.answer("Экономика исправлена!")
 
 @dp.message(Command("top_user"))
 async def handle_top_user_command(message: types.Message):
@@ -1007,16 +1017,6 @@ async def select_shackles(callback: types.CallbackQuery):
     await callback.answer()
 
 # Команда для админа (/fix_economy), чтобы сбросить аномальные балансы
-@dp.message(Command('fix_economy'))
-async def fix_economy(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    
-    for user_id in users:
-        users[user_id]["balance"] = min(users[user_id]["balance"], 10_000)  # Макс 10к
-    
-    save_db()
-    await message.answer("Экономика исправлена!")
 
 @dp.callback_query(F.data.startswith(SHACKLES_PREFIX))
 async def buy_shackles(callback: types.CallbackQuery):
