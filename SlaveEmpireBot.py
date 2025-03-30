@@ -293,35 +293,59 @@ async def check_subscription(user_id: int):
 async def passive_income_task():
     while True:
         await asyncio.sleep(60)
-        now = datetime.now()
-        for user_id, user in users.items():
-            if "last_passive" in user:
+        try:
+            now = datetime.now()
+            for user_id, user in users.items():
+                if "last_passive" not in user:
+                    user["last_passive"] = now
+                    continue
+                    
                 mins_passed = (now - user["last_passive"]).total_seconds() / 60
+                mins_passed = min(mins_passed, 180)  # Максимум 3 часа, даже если бот был выключен
                 
-                # Базовый доход
+                # 1. Базовый доход (1₽/мин)
                 base_income = 1 * mins_passed
                 
-                # Доход от склада
-                storage_income = user.get("upgrades", {}).get("storage", 0) * 10 * mins_passed
+                # 2. Доход от склада (10₽/мин за уровень)
+                storage_level = user.get("upgrades", {}).get("storage", 0)
+                storage_income = storage_level * 10 * mins_passed
                 
-                # Доход от рабов (с налогом 20%)
+                # 3. Доход от рабов с налогом
                 slaves_income = 0
-                for slave_id in user.get("slaves", []):
-                    if slave_id in users:
-                        slave = users[slave_id]
-                        slave_income = 100 * (1 + 0.3 * slave.get("slave_level", 0)) * mins_passed
-                        owner_level = user.get("slave_level", 0)
-                        tax_rate = min(0.1 + 0.05 * owner_level, 0.3)
-                        tax = int(slave_income * tax_rate)
-                        slave["balance"] += slave_income - tax
-                        slaves_income += tax  # Налог идёт владельцу
+                if user.get("slaves"):
+                    for slave_id in user["slaves"]:
+                        if slave_id in users:
+                            slave = users[slave_id]
+                            
+                            # Доход раба (100₽/час базовый + 30% за уровень)
+                            slave_income = 100 * (1 + 0.3 * slave.get("slave_level", 0)) * (mins_passed / 60)
+                            
+                            # Налог зависит от УРОВНЯ РАБА (а не владельца!)
+                            slave_level = slave.get("slave_level", 0)
+                            tax_rate = min(0.1 + 0.05 * slave_level, 0.3)
+                            tax = int(slave_income * tax_rate)
+                            
+                            # Раб получает 70-90% дохода
+                            slave["balance"] = min(slave.get("balance", 0) + slave_income - tax, 100_000)
+                            
+                            # Владелец получает налог 10-30%
+                            slaves_income += tax
                 
+                # Итоговый доход (база + склад + налоги с рабов)
                 total_income = base_income + storage_income + slaves_income
-                user["balance"] += total_income
-                user["total_income"] += total_income
+                
+                # Защита от переполнения
+                user["balance"] = min(user.get("balance", 0) + total_income, 100_000)
+                user["total_income"] = user.get("total_income", 0) + total_income
                 user["last_passive"] = now
-        save_db()
             
+            # Сохраняем каждые 5 минут (не на каждой итерации)
+            if int(time.time()) % 300 == 0:
+                save_db()
+                
+        except Exception as e:
+            logging.error(f"Ошибка в passive_income_task: {e}", exc_info=True)
+            await asyncio.sleep(10)  # Пауза при ошибке
 
 # Обработчики команд
 @dp.message(Command('start'))
@@ -981,6 +1005,18 @@ async def select_shackles(callback: types.CallbackQuery):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
     )
     await callback.answer()
+
+# Команда для админа (/fix_economy), чтобы сбросить аномальные балансы
+@dp.message(Command('fix_economy'))
+async def fix_economy(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    
+    for user_id in users:
+        users[user_id]["balance"] = min(users[user_id]["balance"], 10_000)  # Макс 10к
+    
+    save_db()
+    await message.answer("Экономика исправлена!")
 
 @dp.callback_query(F.data.startswith(SHACKLES_PREFIX))
 async def buy_shackles(callback: types.CallbackQuery):
