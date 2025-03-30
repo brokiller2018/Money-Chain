@@ -94,14 +94,150 @@ def main_keyboard():
             InlineKeyboardButton(text="🛒 Магазин", callback_data="shop")
         ],
         [    
-            InlineKeyboardButton(text="🔗 Рефералка", callback_data=REF_LINK),
+            InlineKeyboardButton(text="🎮 Играть в 21", callback_data="play_21"),
+            InlineKeyboardButton(text="🔗 Рефералка", callback_data=REF_LINK)
+        ],
+        [
             InlineKeyboardButton(text="🏆 Топ владельцев", callback_data=TOP_OWNERS)
         ]
     ])
 
 def get_db_connection():
     return psycopg2.connect(os.getenv("DATABASE_URL"))
+
+class Card:
+    def __init__(self, suit, rank):
+        self.suit = suit
+        self.rank = rank
+        
+    @property
+    def value(self):
+        if self.rank in ['J', 'Q', 'K']:
+            return 10
+        if self.rank == 'A':
+            return 11
+        return int(self.rank)
+        
+    def __repr__(self):
+        suits = {'Spades': '♠️', 'Hearts': '♥️', 'Diamonds': '♦️', 'Clubs': '♣️'}
+        return f"{suits[self.suit]}{self.rank}"
+
+# Класс для игры в Blackjack
+class BlackjackGame:
+    def __init__(self, user_id, bet):
+        self.user_id = user_id
+        self.bet = bet
+        self.deck = self.create_deck()
+        self.player_hand = []
+        self.dealer_hand = []
+        self.game_over = False
+        
+    @staticmethod
+    def create_deck():
+        suits = ['Spades', 'Hearts', 'Diamonds', 'Clubs']
+        ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
+        return [Card(s, r) for s in suits for r in ranks] * 2  # 2 колоды
+        
+    def calculate_hand(self, hand):
+        value = sum(card.value for card in hand)
+        aces = sum(1 for card in hand if card.rank == 'A')
+        
+        while value > 21 and aces:
+            value -= 10
+            aces -= 1
+            
+        return value
+        
+    def deal_card(self):
+        return self.deck.pop(random.randint(0, len(self.deck)-1))
+        
+    def start_game(self):
+        random.shuffle(self.deck)
+        self.player_hand = [self.deal_card(), self.deal_card()]
+        self.dealer_hand = [self.deal_card(), self.deal_card()]
+        
+    async def handle_action(self, action, message, bot):
+        if self.game_over:
+            return
+            
+        if action == 'hit':
+            self.player_hand.append(self.deal_card())
+            if self.calculate_hand(self.player_hand) > 21:
+                await self.end_game('lose', message, bot)
+                
+        elif action == 'stand':
+            await self.dealer_turn(message, bot)
+            
+        elif action == 'double':
+            if len(self.player_hand) == 2:
+                self.bet *= 2
+                self.player_hand.append(self.deal_card())
+                await self.dealer_turn(message, bot)
+                
+        await self.update_display(message, bot)
+        
+    async def dealer_turn(self, message, bot):
+        while self.calculate_hand(self.dealer_hand) < 17:
+            self.dealer_hand.append(self.deal_card())
+        await self.end_game(None, message, bot)
+        
+    async def end_game(self, result, message, bot):
+    self.game_over = True
+    player_value = self.calculate_hand(self.player_hand)
+    dealer_value = self.calculate_hand(self.dealer_hand)
     
+    if not result:
+        if player_value > 21:
+            result = 'lose'
+        elif dealer_value > 21 or player_value > dealer_value:
+            result = 'win'
+        elif player_value == dealer_value:
+            result = 'draw'
+        else:
+            result = 'lose'
+            
+    user = users[self.user_id]
+    
+    if result == 'win':
+        win_amount = int(self.bet * 1.5) if len(self.player_hand) == 2 and player_value == 21 else self.bet
+        user["balance"] += win_amount
+        text = f"🎉 Вы выиграли {win_amount}₽!"
+    elif result == 'draw':
+        text = "🤝 Ничья! Ставка возвращена"
+    else:
+        user["balance"] -= self.bet
+        text = f"💸 Вы проиграли {self.bet}₽"
+        
+    if self.user_id in active_games:
+        del active_games[self.user_id]
+        
+    await message.edit_text(
+        text=(
+            f"{text}\n\n"
+            f"Ваши карты: {self.player_hand} ({player_value})\n"
+            f"Карты дилера: {self.dealer_hand} ({dealer_value})"
+        ),
+        reply_markup=main_keyboard()
+    )
+    save_db()
+        
+    async def update_display(self, message, bot):
+        builder = InlineKeyboardBuilder()
+        builder.add(
+            types.InlineKeyboardButton(text="Взять карту ✋", callback_data="bj_hit"),
+            types.InlineKeyboardButton(text="Остановиться ✋", callback_data="bj_stand"),
+            types.InlineKeyboardButton(text="Удвоить ⏫", callback_data="bj_double")
+        )
+        
+        await message.edit_text(
+            text=(
+                f"💰 Ставка: {self.bet}₽\n"
+                f"Ваши карты: {self.player_hand} ({self.calculate_hand(self.player_hand)})\n"
+                f"Карта дилера: {self.dealer_hand[0]} ?"
+            ),
+            reply_markup=builder.as_markup()
+        )
+active_games = {}
 def upgrades_keyboard(user_id):
     buttons = []
     for upgrade_id, data in upgrades.items():
@@ -471,6 +607,38 @@ async def handle_top_user_command(message: types.Message):
     except Exception as e:
         print(f"Ошибка в /top_user: {e}")  # Логирование ошибки
         await message.reply("⚠️ Произошла ошибка при формировании топа")
+
+@dp.callback_query(F.data.startswith("bj_"))
+async def blackjack_handler(callback: types.CallbackQuery):
+    action = callback.data.split("_")[1]
+    user_id = callback.from_user.id
+    
+    if user_id not in active_games:
+        await callback.answer("Игра не найдена!")
+        return
+        
+    game = active_games[user_id]
+    await game.handle_action(action, callback.message, bot)
+    await callback.answer()
+
+@dp.message(Command("blackjack"))
+async def start_blackjack(message: types.Message):
+    user_id = message.from_user.id
+    bet = 500  # Можно сделать динамическую ставку
+    
+    if user_id in active_games:
+        await message.answer("Завершите текущую игру!")
+        return
+        
+    if users[user_id]["balance"] < bet:
+        await message.answer("Недостаточно средств!")
+        return
+        
+    game = BlackjackGame(user_id, bet)
+    game.start_game()
+    active_games[user_id] = game
+    
+    await game.update_display(message, bot)
 
 @dp.callback_query(F.data == "random_slaves")
 async def show_random_slaves(callback: types.CallbackQuery):
@@ -993,6 +1161,69 @@ async def buy_shield(callback: types.CallbackQuery):
     await callback.answer(f"🛡 Щит активирован до {user['shield_active'].strftime('%H:%M')}!", show_alert=True)
     await shop_handler(callback)
     
+@dp.callback_query(F.data == "play_21")
+async def play_21_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    
+    # Проверяем, есть ли активная игра
+    if user_id in active_games:
+        await callback.answer("Завершите текущую игру!", show_alert=True)
+        return
+    
+    # Проверяем баланс
+    min_bet = 500
+    if users[user_id]["balance"] < min_bet:
+        await callback.answer(f"Минимальная ставка - {min_bet}₽!", show_alert=True)
+        return
+    
+    # Создаем клавиатуру для выбора ставки
+    builder = InlineKeyboardBuilder()
+    bets = [500, 1000, 2000, 5000]
+    for bet in bets:
+        builder.add(types.InlineKeyboardButton(
+            text=f"{bet}₽", 
+            callback_data=f"bj_bet_{bet}"
+        ))
+    builder.adjust(2)
+    
+    await callback.message.edit_text(
+        "🎰 <b>Игра 21 (Blackjack)</b>\n\n"
+        "Выберите ставку:",
+        reply_markup=builder.as_markup(),
+        parse_mode=ParseMode.HTML
+    )
+    await callback.answer()
+
+@dp.message(Command("bj_stop"))
+async def stop_blackjack(message: types.Message):
+    user_id = message.from_user.id
+    if user_id in active_games:
+        del active_games[user_id]
+        await message.answer("Игра завершена!", reply_markup=main_keyboard())
+    else:
+        await message.answer("У вас нет активных игр")
+
+@dp.callback_query(F.data.startswith("bj_bet_"))
+async def blackjack_bet_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    bet = int(callback.data.split("_")[2])
+    
+    if user_id in active_games:
+        await callback.answer("У вас уже есть активная игра!", show_alert=True)
+        return
+    
+    if users[user_id]["balance"] < bet:
+        await callback.answer("Недостаточно средств!", show_alert=True)
+        return
+    
+    # Создаем новую игру
+    game = BlackjackGame(user_id, bet)
+    game.start_game()
+    active_games[user_id] = game
+    
+    await game.update_display(callback.message, bot)
+    await callback.answer()
+
 @dp.callback_query(F.data == "select_shackles")
 async def select_shackles(callback: types.CallbackQuery):
     user_id = callback.from_user.id
