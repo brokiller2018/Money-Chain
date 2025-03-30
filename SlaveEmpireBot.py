@@ -182,9 +182,9 @@ class BlackjackGame:
         await self.end_game(None, message, bot)
         
     async def end_game(self, result, message, bot):
-    self.game_over = True
-    player_value = self.calculate_hand(self.player_hand)
-    dealer_value = self.calculate_hand(self.dealer_hand)
+        self.game_over = True
+        player_value = self.calculate_hand(self.player_hand)
+        dealer_value = self.calculate_hand(self.dealer_hand)
     
     if not result:
         if player_value > 21:
