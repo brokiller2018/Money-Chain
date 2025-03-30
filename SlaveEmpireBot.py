@@ -51,7 +51,7 @@ dp = Dispatcher(storage=storage)
 # База данных
 users = {}
 user_search_cache = {}
-
+active_games = {}
 # Улучшения
 upgrades = {
     "storage": {
@@ -107,6 +107,38 @@ def main_keyboard():
 
 def get_db_connection():
     return psycopg2.connect(os.getenv("DATABASE_URL"))
+
+async def cleanup_games():
+        while True:
+            await asyncio.sleep(300)  # Проверка каждые 5 минут
+            try:
+                current_time = datetime.now()
+                expired = [
+                    user_id for user_id, game in active_games.items()
+                    if (current_time - game.start_time).total_seconds() > 1800  # 30 минут
+                ]
+                for user_id in expired:
+                    del active_games[user_id]
+                    logging.info(f"Очищена зависшая игра пользователя {user_id}")
+            except Exception as e:
+                logging.error(f"Ошибка в cleanup_games: {e}")
+async def on_startup():
+    global users
+    users = load_db()  # Загружаем БД при старте
+    asyncio.create_task(passive_income_task())
+    asyncio.create_task(autosave_task())
+    asyncio.create_task(cleanup_games())  # Добавляем очистку игр
+    
+    # Сохраняем БД при корректном завершении
+    def save_on_exit(*args):
+        save_db()
+    
+    import signal
+    signal.signal(signal.SIGTERM, save_on_exit)
+    signal.signal(signal.SIGINT, save_on_exit)
+    
+    # Удаляем ошибочную строку с self
+    logging.info("Бот успешно запущен")
 
 class Card:
     def __init__(self, suit, rank):
@@ -236,20 +268,6 @@ class BlackjackGame:
             )
         save_db()
 
-    async def cleanup_games():
-        while True:
-            await asyncio.sleep(300)  # Проверка каждые 5 минут
-            try:
-                current_time = datetime.now()
-                expired = [
-                    user_id for user_id, game in active_games.items()
-                    if (current_time - game.start_time).total_seconds() > 1800  # 30 минут
-                ]
-                for user_id in expired:
-                    del active_games[user_id]
-                    logging.info(f"Очищена зависшая игра пользователя {user_id}")
-            except Exception as e:
-                logging.error(f"Ошибка в cleanup_games: {e}")
 
     async def update_display(self, message, bot):
         builder = InlineKeyboardBuilder()
@@ -267,7 +285,6 @@ class BlackjackGame:
             ),
             reply_markup=builder.as_markup()
         )
-active_games = {}
 def upgrades_keyboard(user_id):
     buttons = []
     for upgrade_id, data in upgrades.items():
@@ -1663,23 +1680,6 @@ async def autosave_task():
         await asyncio.sleep(300)  # 5 минут
         save_db()
         
-async def on_startup():
-    global users
-    users = load_db()  # Загружаем БД при старте
-    asyncio.create_task(passive_income_task())
-    asyncio.create_task(autosave_task())
-    asyncio.create_task(cleanup_games())  # Добавляем очистку игр
-    
-    # Сохраняем БД при корректном завершении
-    def save_on_exit(*args):
-        save_db()
-    
-    import signal
-    signal.signal(signal.SIGTERM, save_on_exit)
-    signal.signal(signal.SIGINT, save_on_exit)
-    
-    # Удаляем ошибочную строку с self
-    logging.info("Бот успешно запущен")
 
 async def on_shutdown():
     save_db() 
