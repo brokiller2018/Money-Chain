@@ -152,7 +152,7 @@ class BlackjackGame:
         return value
         
     def deal_card(self):
-        return self.deck.pop(random.randint(0, len(self.deck)-1)
+        return self.deck.pop(random.randint(0, len(self.deck)-1))
         
     async def start_game(self):
         random.shuffle(self.deck)
