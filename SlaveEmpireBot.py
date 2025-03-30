@@ -41,6 +41,7 @@ DAILY_WORK_LIMIT = 10
 MAX_BARRACKS_LEVEL = 10
 DAILY_WORK_LIMIT = 7
 MIN_SLAVES_FOR_RANDOM = 3 
+BLACKJACK_PREFIX = "bj_"
 
 # Инициализация
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -153,10 +154,15 @@ class BlackjackGame:
     def deal_card(self):
         return self.deck.pop(random.randint(0, len(self.deck)-1))
         
-    def start_game(self):
+    async def start_game(self):
+        self.deck = self.create_deck()
         random.shuffle(self.deck)
         self.player_hand = [self.deal_card(), self.deal_card()]
         self.dealer_hand = [self.deal_card(), self.deal_card()]
+    
+    # Первая проверка на блэкджек
+    if self.calculate_hand(self.player_hand) == 21:
+        await self.end_game('blackjack', None, None)
         
     async def handle_action(self, action, message, bot):
         if self.game_over:
@@ -610,18 +616,23 @@ async def handle_top_user_command(message: types.Message):
         print(f"Ошибка в /top_user: {e}")  # Логирование ошибки
         await message.reply("⚠️ Произошла ошибка при формировании топа")
 
-@dp.callback_query(F.data.startswith("bj_"))
+# Обновляем обработчик колбэков для игры
+@dp.callback_query(F.data.startswith(BLACKJACK_PREFIX))
 async def blackjack_handler(callback: types.CallbackQuery):
-    action = callback.data.split("_")[1]
-    user_id = callback.from_user.id
-    
-    if user_id not in active_games:
-        await callback.answer("Игра не найдена!")
-        return
+    try:
+        action = callback.data.split("_")[1]
+        user_id = callback.from_user.id
         
-    game = active_games[user_id]
-    await game.handle_action(action, callback.message, bot)
-    await callback.answer()
+        if user_id not in active_games:
+            await callback.answer("Игра завершена или не найдена!", show_alert=True)
+            return
+            
+        game = active_games[user_id]
+        await game.handle_action(action, callback.message, bot)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Blackjack error: {e}", exc_info=True)
+        await callback.answer("⚠️ Ошибка в игре", show_alert=True)
 
 @dp.message(Command("blackjack"))
 async def start_blackjack(message: types.Message):
@@ -1165,36 +1176,35 @@ async def buy_shield(callback: types.CallbackQuery):
     
 @dp.callback_query(F.data == "play_21")
 async def play_21_handler(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    
-    # Проверяем, есть ли активная игра
-    if user_id in active_games:
-        await callback.answer("Завершите текущую игру!", show_alert=True)
-        return
-    
-    # Проверяем баланс
-    min_bet = 500
-    if users[user_id]["balance"] < min_bet:
-        await callback.answer(f"Минимальная ставка - {min_bet}₽!", show_alert=True)
-        return
-    
-    # Создаем клавиатуру для выбора ставки
-    builder = InlineKeyboardBuilder()
-    bets = [500, 1000, 2000, 5000]
-    for bet in bets:
-        builder.add(types.InlineKeyboardButton(
-            text=f"{bet}₽", 
-            callback_data=f"bj_bet_{bet}"
-        ))
-    builder.adjust(2)
-    
-    await callback.message.edit_text(
-        "🎰 <b>Игра 21 (Blackjack)</b>\n\n"
-        "Выберите ставку:",
-        reply_markup=builder.as_markup(),
-        parse_mode=ParseMode.HTML
-    )
-    await callback.answer()
+    try:
+        user_id = callback.from_user.id
+        user = users.get(user_id)
+        
+        if user_id in active_games:
+            await callback.answer("Завершите текущую игру!", show_alert=True)
+            return
+
+        # Создаем клавиатуру для выбора ставки
+        builder = InlineKeyboardBuilder()
+        bets = [500, 1000, 2000, 5000]
+        for bet in bets:
+            builder.add(types.InlineKeyboardButton(
+                text=f"{bet}₽", 
+                callback_data=f"bj_bet_{bet}"
+            ))
+        builder.adjust(2)
+        
+        await callback.message.edit_text(
+            "🎰 <b>Игра 21 (Blackjack)</b>\n\n"
+            "Выберите ставку:",
+            reply_markup=builder.as_markup(),
+            parse_mode=ParseMode.HTML
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Play 21 error: {e}", exc_info=True)
+        await callback.answer("⚠️ Ошибка запуска игры", show_alert=True)
+
 
 @dp.message(Command("bj_stop"))
 async def stop_blackjack(message: types.Message):
@@ -1207,24 +1217,29 @@ async def stop_blackjack(message: types.Message):
 
 @dp.callback_query(F.data.startswith("bj_bet_"))
 async def blackjack_bet_handler(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    bet = int(callback.data.split("_")[2])
-    
-    if user_id in active_games:
-        await callback.answer("У вас уже есть активная игра!", show_alert=True)
-        return
-    
-    if users[user_id]["balance"] < bet:
-        await callback.answer("Недостаточно средств!", show_alert=True)
-        return
-    
-    # Создаем новую игру
-    game = BlackjackGame(user_id, bet)
-    game.start_game()
-    active_games[user_id] = game
-    
-    await game.update_display(callback.message, bot)
-    await callback.answer()
+    try:
+        user_id = callback.from_user.id
+        bet = int(callback.data.split("_")[2])
+        
+        if user_id in active_games:
+            await callback.answer("Завершите текущую игру!", show_alert=True)
+            return
+        
+        if users[user_id]["balance"] < bet:
+            await callback.answer("Недостаточно средств!", show_alert=True)
+            return
+        
+        # Создаем новую игру
+        game = BlackjackGame(user_id, bet)
+        game.start_game()
+        active_games[user_id] = game
+        
+        # Отправляем начальное сообщение
+        await game.update_display(callback.message, bot)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Bet handler error: {e}", exc_info=True)
+        await callback.answer("⚠️ Ошибка в ставке", show_alert=True)
 
 @dp.callback_query(F.data == "select_shackles")
 async def select_shackles(callback: types.CallbackQuery):
