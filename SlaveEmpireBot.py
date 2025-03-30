@@ -310,6 +310,7 @@ async def passive_income_task():
                     if slave_id in users:
                         slave = users[slave_id]
                         slave_income = 100 * (1 + 0.3 * slave.get("slave_level", 0)) * mins_passed
+                        owner_level = user.get("slave_level", 0)
                         tax_rate = min(0.1 + 0.05 * owner_level, 0.3)
                         tax = int(slave_income * tax_rate)
                         slave["balance"] += slave_income - tax
