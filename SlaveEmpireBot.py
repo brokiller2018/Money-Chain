@@ -186,40 +186,40 @@ class BlackjackGame:
         player_value = self.calculate_hand(self.player_hand)
         dealer_value = self.calculate_hand(self.dealer_hand)
     
-    if not result:
-        if player_value > 21:
-            result = 'lose'
-        elif dealer_value > 21 or player_value > dealer_value:
-            result = 'win'
-        elif player_value == dealer_value:
-            result = 'draw'
+        if not result:
+            if player_value > 21:
+                result = 'lose'
+            elif dealer_value > 21 or player_value > dealer_value:
+                result = 'win'
+            elif player_value == dealer_value:
+                result = 'draw'
+            else:
+                result = 'lose'
+                
+        user = users[self.user_id]
+        
+        if result == 'win':
+            win_amount = int(self.bet * 1.5) if len(self.player_hand) == 2 and player_value == 21 else self.bet
+            user["balance"] += win_amount
+            text = f"🎉 Вы выиграли {win_amount}₽!"
+        elif result == 'draw':
+            text = "🤝 Ничья! Ставка возвращена"
         else:
-            result = 'lose'
+            user["balance"] -= self.bet
+            text = f"💸 Вы проиграли {self.bet}₽"
             
-    user = users[self.user_id]
-    
-    if result == 'win':
-        win_amount = int(self.bet * 1.5) if len(self.player_hand) == 2 and player_value == 21 else self.bet
-        user["balance"] += win_amount
-        text = f"🎉 Вы выиграли {win_amount}₽!"
-    elif result == 'draw':
-        text = "🤝 Ничья! Ставка возвращена"
-    else:
-        user["balance"] -= self.bet
-        text = f"💸 Вы проиграли {self.bet}₽"
-        
-    if self.user_id in active_games:
-        del active_games[self.user_id]
-        
-    await message.edit_text(
-        text=(
-            f"{text}\n\n"
-            f"Ваши карты: {self.player_hand} ({player_value})\n"
-            f"Карты дилера: {self.dealer_hand} ({dealer_value})"
-        ),
-        reply_markup=main_keyboard()
-    )
-    save_db()
+        if self.user_id in active_games:
+            del active_games[self.user_id]
+            
+        await message.edit_text(
+            text=(
+                f"{text}\n\n"
+                f"Ваши карты: {self.player_hand} ({player_value})\n"
+                f"Карты дилера: {self.dealer_hand} ({dealer_value})"
+            ),
+            reply_markup=main_keyboard()
+        )
+        save_db()
         
     async def update_display(self, message, bot):
         builder = InlineKeyboardBuilder()
