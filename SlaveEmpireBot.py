@@ -237,18 +237,20 @@ class BlackjackGame:
         save_db()
 
     async def cleanup_games():
-        while True:
-            await asyncio.sleep(300)  # Каждые 5 минут
-            try:
-                expired = [
-                    uid for uid, game in active_games.items()
-                    if (datetime.now() - game.start_time).seconds > 1800  # 30 минут
-                ]
-                for uid in expired:
-                    del active_games[uid]
-                    logging.info(f"Удалена зависшая игра: {uid}")
-            except Exception as e:
-                logging.error(f"Ошибка очистки: {e}")
+    """Фоновая задача для очистки зависших игр"""
+    while True:
+        await asyncio.sleep(300)  # Проверка каждые 5 минут
+        try:
+            current_time = datetime.now()
+            expired = [
+                user_id for user_id, game in active_games.items()
+                if (current_time - game.start_time).total_seconds() > 1800  # 30 минут
+            ]
+            for user_id in expired:
+                del active_games[user_id]
+                logging.info(f"Очищена зависшая игра пользователя {user_id}")
+        except Exception as e:
+            logging.error(f"Ошибка в cleanup_games: {e}")
 
     async def update_display(self, message, bot):
         builder = InlineKeyboardBuilder()
@@ -1667,16 +1669,19 @@ async def on_startup():
     users = load_db()  # Загружаем БД при старте
     asyncio.create_task(passive_income_task())
     asyncio.create_task(autosave_task())
+    asyncio.create_task(cleanup_games())  # Добавляем очистку игр
+    
     # Сохраняем БД при корректном завершении
-    import signal
-    import functools
     def save_on_exit(*args):
         save_db()
     
+    import signal
     signal.signal(signal.SIGTERM, save_on_exit)
     signal.signal(signal.SIGINT, save_on_exit)
-    del active_games[self.user_id]
     
+    # Удаляем ошибочную строку с self
+    logging.info("Бот успешно запущен")
+
 async def on_shutdown():
     save_db() 
 
