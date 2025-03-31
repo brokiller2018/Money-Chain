@@ -195,33 +195,33 @@ class BlackjackGame:
             await self.cleanup_game()
 
         async def handle_action(self, action: str):
-        try:
-            self.last_action_time = datetime.now()  # Обновляем время при каждом действии
-            if self.game_over:
-                return
-
-            if action == 'hit':
-                self.player_hand.append(self.deal_card())
-                if self.calculate_hand(self.player_hand) > 21:
-                    await self.end_game('lose')
-
-            elif action == 'stand':
-                await self.dealer_turn()
-
-            elif action == 'double':
-                if len(self.player_hand) == 2:
-                    self.bet *= 2
-                    self.player_hand.append(self.deal_card())
-                    await self.dealer_turn()
-
-            await self.update_display()
-        except Exception as e:
-            logging.error(f"Ошибка обработки действия: {e}")
-            # Здесь не вызываем cleanup_game, чтобы не удалять игру при незначительной ошибке
             try:
-                await self.message.reply("⚠️ Произошла ошибка. Попробуйте снова.")
-            except Exception:
-                pass
+                self.last_action_time = datetime.now()  # Обновляем время при каждом действии
+                if self.game_over:
+                    return
+    
+                if action == 'hit':
+                    self.player_hand.append(self.deal_card())
+                    if self.calculate_hand(self.player_hand) > 21:
+                        await self.end_game('lose')
+    
+                elif action == 'stand':
+                    await self.dealer_turn()
+    
+                elif action == 'double':
+                    if len(self.player_hand) == 2:
+                        self.bet *= 2
+                        self.player_hand.append(self.deal_card())
+                        await self.dealer_turn()
+    
+                await self.update_display()
+            except Exception as e:
+                logging.error(f"Ошибка обработки действия: {e}")
+                # Здесь не вызываем cleanup_game, чтобы не удалять игру при незначительной ошибке
+                try:
+                    await self.message.reply("⚠️ Произошла ошибка. Попробуйте снова.")
+                except Exception:
+                    pass
 
     async def dealer_turn(self):
         try:
