@@ -283,18 +283,17 @@ class BlackjackGame:
             await self.cleanup_game()
 
     async def cleanup_game(self):
-        """Гарантированная очистка ресурсов"""
         try:
             if self.user_id in active_games:
-                # Убедимся, что удаляем именно текущую игру
                 if active_games[self.user_id] is self:
                     del active_games[self.user_id]
                     logging.info(f"Игра пользователя {self.user_id} корректно удалена")
             save_db()
         except Exception as e:
             logging.error(f"Ошибка очистки игры: {str(e)}")
+
     async def update_display(self):
-            """Обновление игрового интерфейса"""
+        """Обновление игрового интерфейса"""
         try:
             builder = InlineKeyboardBuilder()
             builder.add(
@@ -302,7 +301,7 @@ class BlackjackGame:
                 types.InlineKeyboardButton(text="Стоп ✋", callback_data="bj_stand"),
                 types.InlineKeyboardButton(text="Удвоить ⏫", callback_data="bj_double")
             )
-        
+    
             await self.message.edit_text(
                 text=(
                     f"💰 Ставка: {self.bet}₽\n"
@@ -313,12 +312,12 @@ class BlackjackGame:
             )
         except Exception as e:
             logging.error(f"Ошибка обновления интерфейса: {e}")
-                # Если ошибка связана с тем, что сообщение не изменилось или его не найти,
-                # просто выходим, не вызывая cleanup_game(), чтобы игра не сбрасывалась
+            # Если ошибка связана с тем, что сообщение не изменилось или его не найти,
+            # просто выходим, не вызывая cleanup_game(), чтобы игра не сбрасывалась
             error_message = str(e).lower()
             if "message is not modified" in error_message or "message to edit not found" in error_message:
                 return
-                # Для других ошибок можно уведомить пользователя (не сбрасывая игру)
+            # Для других ошибок можно уведомить пользователя (не сбрасывая игру)
             try:
                 await self.message.reply("⚠️ Ошибка обновления интерфейса. Попробуйте повторить действие.")
             except Exception:
