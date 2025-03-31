@@ -41,7 +41,6 @@ DAILY_WORK_LIMIT = 10
 MAX_BARRACKS_LEVEL = 10
 DAILY_WORK_LIMIT = 7
 MIN_SLAVES_FOR_RANDOM = 3 
-BLACKJACK_PREFIX = "bj_"
 
 # Инициализация
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -671,24 +670,6 @@ async def handle_top_user_command(message: types.Message):
     except Exception as e:
         print(f"Ошибка в /top_user: {e}")  # Логирование ошибки
         await message.reply("⚠️ Произошла ошибка при формировании топа")
-
-# Обновляем обработчик колбэков для игры
-@dp.callback_query(F.data.startswith(BLACKJACK_PREFIX))
-async def blackjack_handler(callback: types.CallbackQuery):
-    try:
-        action = callback.data.split("_")[1]
-        user_id = callback.from_user.id
-        
-        if user_id not in active_games:
-            await callback.answer("Игра завершена или не найдена!", show_alert=True)
-            return
-            
-        game = active_games[user_id]
-        await game.handle_action(action)
-        await callback.answer()
-    except Exception as e:
-        logging.error(f"Blackjack error: {e}", exc_info=True)
-        await callback.answer("⚠️ Ошибка в игре", show_alert=True)
 
 @dp.message(Command("blackjack"))
 async def start_blackjack(message: types.Message):
