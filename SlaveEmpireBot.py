@@ -172,17 +172,18 @@ class BlackjackGame:
 
     async def start_game(self, message: types.Message):
         try:
-            self.message = message  # Сохраняем объект сообщения
+            self.message = message
             self.deck = self.create_deck()
             random.shuffle(self.deck)
             self.player_hand = [self.deal_card(), self.deal_card()]
             self.dealer_hand = [self.deal_card(), self.deal_card()]
 
-            # Проверка блэкджека
+            # Проверка блэкджека и отображение интерфейса
             if self.calculate_hand(self.player_hand) == 21:
                 await self.end_game('blackjack')
             else:
-                await self.update_display()
+                await self.update_display()  # Важно: добавлен await!
+
         except Exception as e:
             logging.error(f"Ошибка запуска игры: {e}")
             await self.cleanup_game()
@@ -1301,13 +1302,13 @@ async def blackjack_bet_handler(callback: types.CallbackQuery):
             await callback.answer("Недостаточно средств!")
             return
 
-        # Создаем новую игру с передачей бота
+        # Создаем игру и добавляем в active_games ПЕРЕД запуском
         game = BlackjackGame(user_id, bet, bot)
-        active_games[user_id] = game
-        await game.start_game(callback.message)
+        active_games[user_id] = game  # Сначала добавляем
+        await game.start_game(callback.message)  # Потом запускаем
         
     except Exception as e:
-        logging.error(f"Ошибка начала игры BJ: {e}")
+        logging.error(f"Ошибка начала игры: {e}")
         if user_id in active_games:
             del active_games[user_id]
         await callback.answer("⚠️ Ошибка запуска игры")
