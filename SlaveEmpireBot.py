@@ -1621,78 +1621,74 @@ async def profile_handler(callback: types.CallbackQuery):
             await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
             return
 
-        # Рассчитываем цену выкупа, если пользователь раб
+        # Инициализация отсутствующих полей
+        user.setdefault("balance", 0)
+        user.setdefault("slave_level", 0)
+        user.setdefault("upgrades", {})
+
+        # Расчет цены выкупа
         buyout_price = 0
         if user.get("owner"):
-            base_price = user.get("base_price", 100)
             try:
-                buyout_price = int((base_price + float(user.get("balance", 0)) * 0.1) * (1 + user.get("slave_level", 0) * 0.5))
-            except Exception as calc_err:
-                logging.error(f"Ошибка расчёта выкупа: {calc_err}")
-                buyout_price = base_price
-            buyout_price = max(100, min(10000, buyout_price))
-        
-        # Получаем уровни улучшений
-        storage_level = user.get("upgrades", {}).get("storage", 0)
-        barracks_level = user.get("upgrades", {}).get("barracks", 0)
-        whip_level = user.get("upgrades", {}).get("whip", 0)
-        
-        # Рассчитываем пассивный доход в минуту
-        passive_per_min = 1 + storage_level * 10  # Базовый доход + склад
+                base_price = user.get("base_price", 100)
+                balance = float(user.get("balance", 0))
+                slave_level = user.get("slave_level", 0)
+                buyout_price = int((base_price + balance * 0.1) * (1 + slave_level * 0.5))
+                buyout_price = max(100, min(10000, buyout_price))
+            except Exception as e:
+                logging.error(f"Ошибка расчета выкупа: {e}")
+                buyout_price = "Ошибка"
+
+        # Уровни улучшений
+        storage_level = user["upgrades"].get("storage", 0)
+        barracks_level = user["upgrades"].get("barracks", 0)
+        whip_level = user["upgrades"].get("whip", 0)
+
+        # Пассивный доход
+        passive_per_min = 1 + storage_level * 10
         slave_income = 0
         for slave_id in user.get("slaves", []):
             if slave_id in users:
                 slave = users[slave_id]
-                try:
-                    slave_income += 100 * (1 + 0.3 * slave.get("slave_level", 0))
-                except Exception as e:
-                    logging.error(f"Ошибка расчёта дохода раба: {e}")
-        if user.get("owner"):
-            passive_per_min += slave_income * 0.7 / 60
-        else:
-            passive_per_min += slave_income / 60
+                slave_level = slave.get("slave_level", 0)
+                slave_income += 100 * (1 + 0.3 * slave_level)
         
-        # Формируем текст профиля
+        passive_per_min += slave_income / 60
+
+        # Формирование текста
         text = [
             f"👑 <b>Профиль @{user.get('username', 'unknown')}</b>",
-            f"▸ 💰 Баланс: {float(user.get('balance', 0)):.1f}₽",
-            f"▸ 💸 Пассивный доход: {passive_per_min:.1f}₽/мин ({passive_per_min*60:.1f}₽/час)",
-            f"▸ 👥 Уровень раба: {user.get('slave_level', 0)}",
-            f"▸ 🛠 Улучшения: {sum(user.get('upgrades', {}).values())}",
-            f"▸ 📦 Склад: ур. {storage_level} (+{storage_level * 10}₽/мин)",
-            f"▸ 🏠 Бараки: ур. {barracks_level} (лимит {5 + 2 * barracks_level})",
-            f"▸ ⛓ Кнуты: ур. {whip_level} (налог {10 + 2 * whip_level}%)"
+            f"▸ 💰 Баланс: {float(user['balance']):.1f}₽",
+            f"▸ 💸 Пассивка: {passive_per_min:.1f}₽/мин",
+            f"▸ 👥 Ур.раба: {user['slave_level']}",
+            f"▸ 📦 Склад: ур.{storage_level}",
+            f"▸ 🏠 Бараки: ур.{barracks_level}",
         ]
-        
-        # Добавляем информацию о защите от перекупа, если применимо
-        if user.get("last_purchased"):
-            cooldown = timedelta(hours=3)
-            time_left = cooldown - (datetime.now() - user["last_purchased"])
-            if time_left.total_seconds() > 0:
-                hours = int(time_left.total_seconds() // 3600)
-                minutes = int((time_left.total_seconds() % 3600) // 60)
-                text.append(f"\n⏳ Защита от перекупа: {hours}ч {minutes}м")
-        
+
+        # Информация о владельце
         if user.get("owner"):
-            owner = users.get(user["owner"], {})
+            owner_id = user["owner"]
+            owner = users.get(owner_id)
+            owner_name = f"@{owner['username']}" if owner else "неизвестный"
             text.append(
-                f"\n⚠️ <b>Налог рабства:</b> 30% дохода → @{owner.get('username', 'unknown')}\n"
+                f"\n⚠️ <b>Налог рабства:</b> 30% → {owner_name}\n"
                 f"▸ Цена выкупа: {buyout_price}₽"
             )
         else:
             text.append("\n🔗 Вы свободный человек")
-            
-        # Формирование клавиатуры профиля
+
+        # Клавиатура выкупа
         keyboard = []
-        if user.get("owner"):
+        if user.get("owner") and isinstance(buyout_price, int):
             keyboard.append([
                 InlineKeyboardButton(
                     text=f"🆓 Выкупиться за {buyout_price}₽",
                     callback_data=f"{BUYOUT_PREFIX}{buyout_price}"
                 )
             ])
-        keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)])
         
+        keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data=MAIN_MENU)])
+
         await callback.message.edit_text(
             "\n".join(text),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
@@ -1702,7 +1698,7 @@ async def profile_handler(callback: types.CallbackQuery):
         
     except Exception as e:
         logging.error(f"Ошибка профиля: {e}", exc_info=True)
-        await callback.answer("❌ Ошибка загрузки профиля", show_alert=True)
+        await callback.answer("❌ Ошибка загрузки. Попробуйте позже.", show_alert=True)
 
 
 async def autosave_task():
