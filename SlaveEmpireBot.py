@@ -830,7 +830,7 @@ async def blackjack_handler(callback: types.CallbackQuery):
 
         await callback.answer()
 
-     except Exception as e:
+    except Exception as e:
         logging.error(f"Критическая ошибка игры: {e}")
         await callback.answer("🌀 Перезапустите игру!")
         if user_id in active_games:
