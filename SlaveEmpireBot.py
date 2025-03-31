@@ -291,32 +291,32 @@ class BlackjackGame:
             logging.error(f"Ошибка очистки игры: {str(e)}")
 
     async def update_display(self):
-    """Обновление игрового интерфейса"""
-    try:
-        builder = InlineKeyboardBuilder()
-        builder.add(
-            types.InlineKeyboardButton(text="Взять ✋", callback_data="bj_hit"),
-            types.InlineKeyboardButton(text="Стоп ✋", callback_data="bj_stand"),
-            types.InlineKeyboardButton(text="Удвоить ⏫", callback_data="bj_double")
-        )
-
-        await self.message.edit_text(
-            text=(
-                f"💰 Ставка: {self.bet}₽\n"
-                f"Ваши карты: {self.player_hand} ({self.calculate_hand(self.player_hand)})\n"
-                f"Карта дилера: {self.dealer_hand[0]} ?"
-            ),
-            reply_markup=builder.as_markup()
-        )
-    except Exception as e:
-        logging.error(f"Ошибка обновления интерфейса: {e}")
-        # Если ошибка не критична (например, сообщение не изменилось), не вызываем cleanup_game
-        error_message = str(e).lower()
-        if "message is not modified" in error_message or "message to edit not found" in error_message:
-            # Просто выходим, игра остаётся активной
-            return
-        # Если ошибка критическая – очищаем игру
-        await self.cleanup_game()
+        """Обновление игрового интерфейса"""
+        try:
+            builder = InlineKeyboardBuilder()
+            builder.add(
+                types.InlineKeyboardButton(text="Взять ✋", callback_data="bj_hit"),
+                types.InlineKeyboardButton(text="Стоп ✋", callback_data="bj_stand"),
+                types.InlineKeyboardButton(text="Удвоить ⏫", callback_data="bj_double")
+            )
+    
+            await self.message.edit_text(
+                text=(
+                    f"💰 Ставка: {self.bet}₽\n"
+                    f"Ваши карты: {self.player_hand} ({self.calculate_hand(self.player_hand)})\n"
+                    f"Карта дилера: {self.dealer_hand[0]} ?"
+                ),
+                reply_markup=builder.as_markup()
+            )
+        except Exception as e:
+            logging.error(f"Ошибка обновления интерфейса: {e}")
+            # Если ошибка не критична (например, сообщение не изменилось), не вызываем cleanup_game
+            error_message = str(e).lower()
+            if "message is not modified" in error_message or "message to edit not found" in error_message:
+                # Просто выходим, игра остаётся активной
+                return
+            # Если ошибка критическая – очищаем игру
+            await self.cleanup_game()
 
 def upgrades_keyboard(user_id):
     buttons = []
