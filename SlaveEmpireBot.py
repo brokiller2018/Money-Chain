@@ -793,19 +793,26 @@ async def show_random_slaves(callback: types.CallbackQuery):
     
 @dp.callback_query(F.data.startswith("bj_"))
 async def blackjack_handler(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    action = callback.data.split("_")[1]
-    if user_id not in active_games:
-        try:
-            # Убираем кнопки из старого сообщения, если оно ещё существует
-            await callback.message.edit_reply_markup(reply_markup=main_keyboard())
-        except Exception:
-            pass
-        await callback.answer("Игра не найдена! Начните новую.", show_alert=True)
-        return
-    game = active_games[user_id]
-    await game.handle_action(action)
-    await callback.answer()
+    try:
+        user_id = callback.from_user.id
+        action = callback.data.split("_")[1]
+        
+        # Если игра не найдена, убираем старую клавиатуру и оповещаем пользователя.
+        if user_id not in active_games:
+            try:
+                await callback.message.edit_reply_markup(reply_markup=main_keyboard())
+            except Exception:
+                pass
+            await callback.answer("Игра не найдена! Начните новую.", show_alert=True)
+            return
+
+        game = active_games[user_id]
+        await game.handle_action(action)
+        await callback.answer()
+    except Exception as e:
+        logging.error(f"Ошибка обработки действия BJ: {str(e)}", exc_info=True)
+        await callback.answer("⚠️ Ошибка в игре", show_alert=True)
+
 
 
 @dp.callback_query(F.data.startswith(CHECK_SUB))
