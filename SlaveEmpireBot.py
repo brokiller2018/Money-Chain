@@ -164,46 +164,27 @@ class Card:
 # Класс для игры в Blackjack
 class BlackjackGame:
     def __init__(self, user_id: int, bet: int, bot: Bot):
-        try:
-            self.user_id = user_id
-            self.bet = bet
-            self.bot = bot
-            self.deck = self.create_deck()
-            self.player_hand = []
-            self.dealer_hand = []
-            self.game_over = False
-            self.message = None
-            self.last_action_time = datetime.now()
-            logging.info(f"Игра создана для {user_id}, ставка: {bet}")  # Логирование
-
-            # Валидация ставки
-            if not isinstance(bet, int) or bet <= 0:
-                raise ValueError(f"Некорректная ставка: {bet}")
-                
-        except Exception as e:
-            logging.error(f"Ошибка создания игры: {e}", exc_info=True)
-            raise
-
+        self.game_over = False  # Добавляем явную инициализацию
+        self.deck = []  # Инициализируем пустую колоду
+        
     async def start_game(self, message: types.Message):
         try:
-            self.message = message
+            # Явная повторная инициализация
+            self.deck = self.create_deck()
             random.shuffle(self.deck)
+            
+            # Раздача карт
             self.player_hand = [self.deal_card(), self.deal_card()]
             self.dealer_hand = [self.deal_card(), self.deal_card()]
-
-            # Проверка блэкджека
-            player_value = self.calculate_hand(self.player_hand)
-            if player_value == 21:
-                await self.end_game('blackjack')
-            else:
-                await self.update_display()
-                
-            logging.info(f"Игра успешно стартовала для {self.user_id}")
-
+            
+            # Принудительное сохранение
+            active_games[self.user_id] = self
+            
+            await self.update_display()
+            
         except Exception as e:
-            logging.error(f"Ошибка запуска игры: {e}", exc_info=True)
+            logging.error(f"Ошибка старта игры: {e}")
             await self.cleanup_game()
-            raise
 
     def create_deck(self):
         """Создает и возвращает колоду из 52 карт"""
@@ -284,33 +265,34 @@ class BlackjackGame:
             logging.error(f"Ошибка хода дилера: {e}")
             await self.cleanup_game()
 
-    async def update_display(self):
-        """Обновляет игровой интерфейс"""
-        try:
-            builder = InlineKeyboardBuilder()
-            builder.row(
-                InlineKeyboardButton(text="Взять ✋", callback_data="bj_hit"),
-                InlineKeyboardButton(text="Стоп ✋", callback_data="bj_stand"),
-                InlineKeyboardButton(text="Удвоить ⏫", callback_data="bj_double")
-            )
+   async def update_display(self):
+    try:
+        # Показываем статус дилера
+        dealer_status = "Карта дилера: " 
+        if self.game_over:
+            dealer_status = f"Дилер: {self.calculate_hand(self.dealer_hand)}"
+        else:
+            dealer_status = f"Дилер: {self.dealer_hand[0]} ?"
+            
+        await self.message.edit_text(
+            f"💰 Ставка: {self.bet}₽\n"
+            f"Ваши карты: {self.player_hand} ({self.calculate_hand(self.player_hand)})\n"
+            f"{dealer_status}",
+            reply_markup=... 
+        )
+    except Exception as e:
+        logging.error(f"Ошибка отображения: {e}")
 
-            await self.message.edit_text(
-                f"💰 Ставка: {self.bet}₽\n"
-                f"Ваши карты: {self.player_hand} ({self.calculate_hand(self.player_hand)})\n"
-                f"Карта дилера: {self.dealer_hand[0]} ?",
-                reply_markup=builder.as_markup()
-            )
-        except Exception as e:
-            logging.error(f"Ошибка обновления интерфейса: {e}")
-
-    async def cleanup_game(self):
-        """Безопасно удаляет игру из активных"""
-        try:
-            if self.user_id in active_games and active_games[self.user_id] is self:
-                del active_games[self.user_id]
-                logging.info(f"Игра пользователя {self.user_id} удалена")
-        except Exception as e:
-            logging.error(f"Ошибка очистки игры: {e}")
+    async def cleanup_games():
+    while True:
+        await asyncio.sleep(1800)  # 30 минут вместо 5
+        # Очищаем только завершенные игры
+        current_time = datetime.now()
+        expired = [uid for uid, game in active_games.items() 
+                  if game.game_over or (current_time - game.last_action_time).seconds > 3600]
+        
+        for uid in expired:
+            del active_games[uid]
 
 
 def upgrades_keyboard(user_id):
@@ -1310,34 +1292,23 @@ async def blackjack_bet_handler(callback: types.CallbackQuery):
         user_id = callback.from_user.id
         bet = int(callback.data.split("_")[2])
         
-        # Удаляем старые завершенные игры
+        # Удаляем старые игры
         if user_id in active_games:
-            if active_games[user_id].game_over:
-                del active_games[user_id]
-            else:
-                await callback.answer("Завершите текущую игру!")
-                return
-
-        # Проверка баланса
-        if users[user_id]["balance"] < bet:
-            await callback.answer("Недостаточно средств!")
-            return
-
-        # Создаем и регистрируем игру
-        try:
-            game = BlackjackGame(user_id, bet, bot)
-            active_games[user_id] = game
-            await game.start_game(callback.message)
-            logging.info(f"Игра начата для {user_id}")
-        except Exception as e:
-            if user_id in active_games:
-                del active_games[user_id]
-            logging.error(f"Ошибка создания игры: {e}")
-            await callback.answer("⚠️ Ошибка запуска игры")
-
+            del active_games[user_id]  # Важно: принудительная очистка
+        
+        # Создаем новую игру
+        game = BlackjackGame(user_id, bet, bot)
+        active_games[user_id] = game
+        
+        # Явная инициализация колоды
+        game.deck = game.create_deck()
+        random.shuffle(game.deck)
+        
+        await game.start_game(callback.message)
+        
     except Exception as e:
-        logging.error(f"Ошибка обработки ставки: {e}")
-        await callback.answer("⚠️ Критическая ошибка")
+        logging.error(f"Ошибка создания игры: {e}")
+        await callback.answer("❌ Не удалось начать игру")
 
 @dp.callback_query(F.data == "select_shackles")
 async def select_shackles(callback: types.CallbackQuery):
