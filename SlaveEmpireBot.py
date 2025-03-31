@@ -671,24 +671,6 @@ async def handle_top_user_command(message: types.Message):
         print(f"Ошибка в /top_user: {e}")  # Логирование ошибки
         await message.reply("⚠️ Произошла ошибка при формировании топа")
 
-@dp.message(Command("blackjack"))
-async def start_blackjack(message: types.Message):
-    user_id = message.from_user.id
-    bet = 500  # Можно сделать динамическую ставку
-    
-    if user_id in active_games:
-        await message.answer("Завершите текущую игру!")
-        return
-        
-    if users[user_id]["balance"] < bet:
-        await message.answer("Недостаточно средств!")
-        return
-        
-    game = BlackjackGame(user_id, bet)
-    game.start_game()
-    active_games[user_id] = game
-    
-    await game.update_display(message, bot)
 
 @dp.callback_query(F.data == "random_slaves")
 async def show_random_slaves(callback: types.CallbackQuery):
