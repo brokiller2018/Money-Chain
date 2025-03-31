@@ -298,12 +298,12 @@ class BlackjackGame:
             # Сохраняем изменения
             save_db()
 
-    except Exception as e:
-        logging.error(f"Error in end_game: {e}", exc_info=True)
-        # Гарантированно удаляем игру при ошибке
-        if self.user_id in active_games:
-            del active_games[self.user_id]
-        save_db()
+        except Exception as e:
+            logging.error(f"Error in end_game: {e}", exc_info=True)
+            # Гарантированно удаляем игру при ошибке
+            if self.user_id in active_games:
+                del active_games[self.user_id]
+            save_db()
 
 
     async def update_display(self, message, bot):
