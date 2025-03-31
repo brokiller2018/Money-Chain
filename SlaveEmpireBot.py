@@ -108,19 +108,24 @@ def get_db_connection():
     return psycopg2.connect(os.getenv("DATABASE_URL"))
 
 async def cleanup_games():
-        while True:
-            await asyncio.sleep(300)  # Проверка каждые 5 минут
-            try:
-                current_time = datetime.now()
-                expired = [
-                    user_id for user_id, game in active_games.items()
-                    if (current_time - game.start_time).total_seconds() > 1800  # 30 минут
-                ]
-                for user_id in expired:
+    while True:
+        await asyncio.sleep(300)
+        try:
+            current_time = datetime.now()
+            expired = []
+            for user_id, game in active_games.items():
+                # Проверяем время последнего действия вместо времени старта
+                if (current_time - game.last_action_time).total_seconds() > 1800:
+                    expired.append(user_id)
+                    logging.info(f"Найдена зависшая игра: {user_id}")
+
+            for user_id in expired:
+                if user_id in active_games:
                     del active_games[user_id]
                     logging.info(f"Очищена зависшая игра пользователя {user_id}")
-            except Exception as e:
-                logging.error(f"Ошибка в cleanup_games: {e}")
+        except Exception as e:
+            logging.error(f"Ошибка в cleanup_games: {e}")
+
 async def on_startup():
     global users
     users = load_db()  # Загружаем БД при старте
@@ -158,16 +163,18 @@ class Card:
 
 # Класс для игры в Blackjack
 class BlackjackGame:
-    def __init__(self, user_id: int, bet: int, bot: Bot):  # Добавляем bot как параметр
+    def __init__(self, user_id: int, bet: int, bot: Bot):
         self.start_time = datetime.now()
+        self.last_action_time = datetime.now()  # Добавляем отслеживание последнего действия
         self.user_id = user_id
         self.bet = bet
-        self.bot = bot  # Сохраняем экземпляр бота
+        self.bot = bot
         self.deck = self.create_deck()
         self.player_hand = []
         self.dealer_hand = []
         self.game_over = False
-        self.message = None  # Сохраняем сообщение игры
+        self.message = None
+        logging.info(f"Создана новая игра для {user_id}")  # Логирование создания
 
     async def start_game(self, message: types.Message):
         try:
@@ -189,6 +196,7 @@ class BlackjackGame:
 
     async def handle_action(self, action: str):
         try:
+            self.last_action_time = datetime.now()  # Обновляем время при каждом действии
             if self.game_over:
                 return
 
@@ -274,10 +282,13 @@ class BlackjackGame:
         """Гарантированная очистка ресурсов"""
         try:
             if self.user_id in active_games:
-                del active_games[self.user_id]
+                # Убедимся, что удаляем именно текущую игру
+                if active_games[self.user_id] is self:
+                    del active_games[self.user_id]
+                    logging.info(f"Игра пользователя {self.user_id} корректно удалена")
             save_db()
         except Exception as e:
-            logging.error(f"Ошибка очистки игры: {e}")
+            logging.error(f"Ошибка очистки игры: {str(e)}")
 
     async def update_display(self):
         """Обновление игрового интерфейса"""
@@ -531,7 +542,7 @@ async def passive_income_task():
                 total_income = base_income + storage_income + slaves_income
                 
                 # Защита от переполнения
-                user["balance"] = min(user.get("balance", 0) + total_income, 100_000)
+                user["balance"] = min(user.get("balance", 0) + total_income, 10_000_000)
                 user["total_income"] = user.get("total_income", 0) + total_income
                 user["last_passive"] = now
             
@@ -786,6 +797,8 @@ async def blackjack_handler(callback: types.CallbackQuery):
         user_id = callback.from_user.id
         action = callback.data.split("_")[1]
         
+        logging.info(f"Обработка действия {action} для {user_id}. Активные игры: {list(active_games.keys())}")
+
         if user_id not in active_games:
             await callback.answer("Игра не найдена! Начните новую.")
             return
@@ -794,7 +807,7 @@ async def blackjack_handler(callback: types.CallbackQuery):
         await game.handle_action(action)
         await callback.answer()
     except Exception as e:
-        logging.error(f"Ошибка обработки действия BJ: {e}")
+        logging.error(f"Ошибка обработки действия BJ: {str(e)}", exc_info=True)
         await callback.answer("⚠️ Ошибка в игре")
 
 @dp.callback_query(F.data.startswith(CHECK_SUB))
