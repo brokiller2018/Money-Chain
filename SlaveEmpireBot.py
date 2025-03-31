@@ -684,7 +684,7 @@ async def blackjack_handler(callback: types.CallbackQuery):
             return
             
         game = active_games[user_id]
-        await game.handle_action(action, callback.message, bot)
+        await game.handle_action(action)
         await callback.answer()
     except Exception as e:
         logging.error(f"Blackjack error: {e}", exc_info=True)
