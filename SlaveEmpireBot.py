@@ -193,11 +193,11 @@ class BlackjackGame:
         self.player_hand = [self.deal_card(), self.deal_card()]
         self.dealer_hand = [self.deal_card(), self.deal_card()]
     
-    # Проверка блэкджека сразу после раздачи
-    if self.calculate_hand(self.player_hand) == 21:
-        await self.end_game('blackjack', message, self.bot)
-    else:
-        await self.update_display(message, self.bot)
+        # Проверка блэкджека сразу после раздачи
+        if self.calculate_hand(self.player_hand) == 21:
+            await self.end_game('blackjack', message, self.bot)
+        else:
+            await self.update_display(message, self.bot)
             
     async def handle_action(self, action, message, bot):
         if self.game_over:
