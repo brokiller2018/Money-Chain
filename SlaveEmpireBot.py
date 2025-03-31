@@ -164,7 +164,46 @@ class Card:
 # Класс для игры в Blackjack
 class BlackjackGame:
     def __init__(self, user_id: int, bet: int, bot: Bot):
-        # ... предыдущий код конструктора ...
+        try:
+            self.user_id = user_id
+            self.bet = bet
+            self.bot = bot
+            self.deck = self.create_deck()
+            self.player_hand = []
+            self.dealer_hand = []
+            self.game_over = False
+            self.message = None
+            self.last_action_time = datetime.now()
+            logging.info(f"Игра создана для {user_id}, ставка: {bet}")  # Логирование
+
+            # Валидация ставки
+            if not isinstance(bet, int) or bet <= 0:
+                raise ValueError(f"Некорректная ставка: {bet}")
+                
+        except Exception as e:
+            logging.error(f"Ошибка создания игры: {e}", exc_info=True)
+            raise
+
+    async def start_game(self, message: types.Message):
+        try:
+            self.message = message
+            random.shuffle(self.deck)
+            self.player_hand = [self.deal_card(), self.deal_card()]
+            self.dealer_hand = [self.deal_card(), self.deal_card()]
+
+            # Проверка блэкджека
+            player_value = self.calculate_hand(self.player_hand)
+            if player_value == 21:
+                await self.end_game('blackjack')
+            else:
+                await self.update_display()
+                
+            logging.info(f"Игра успешно стартовала для {self.user_id}")
+
+        except Exception as e:
+            logging.error(f"Ошибка запуска игры: {e}", exc_info=True)
+            await self.cleanup_game()
+            raise
 
     def create_deck(self):
         """Создает и возвращает колоду из 52 карт"""
