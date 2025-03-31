@@ -194,7 +194,7 @@ class BlackjackGame:
             logging.error(f"Ошибка запуска игры: {e}")
             await self.cleanup_game()
 
-    async def handle_action(self, action: str):
+        async def handle_action(self, action: str):
         try:
             self.last_action_time = datetime.now()  # Обновляем время при каждом действии
             if self.game_over:
@@ -217,7 +217,11 @@ class BlackjackGame:
             await self.update_display()
         except Exception as e:
             logging.error(f"Ошибка обработки действия: {e}")
-            await self.cleanup_game()
+            # Здесь не вызываем cleanup_game, чтобы не удалять игру при незначительной ошибке
+            try:
+                await self.message.reply("⚠️ Произошла ошибка. Попробуйте снова.")
+            except Exception:
+                pass
 
     async def dealer_turn(self):
         try:
@@ -290,7 +294,7 @@ class BlackjackGame:
         except Exception as e:
             logging.error(f"Ошибка очистки игры: {str(e)}")
 
-    async def update_display(self):
+       async def update_display(self):
         """Обновление игрового интерфейса"""
         try:
             builder = InlineKeyboardBuilder()
@@ -310,13 +314,17 @@ class BlackjackGame:
             )
         except Exception as e:
             logging.error(f"Ошибка обновления интерфейса: {e}")
-            # Если ошибка не критична (например, сообщение не изменилось), не вызываем cleanup_game
+            # Если ошибка связана с тем, что сообщение не изменилось или его не найти,
+            # просто выходим, не вызывая cleanup_game(), чтобы игра не сбрасывалась
             error_message = str(e).lower()
             if "message is not modified" in error_message or "message to edit not found" in error_message:
-                # Просто выходим, игра остаётся активной
                 return
-            # Если ошибка критическая – очищаем игру
-            await self.cleanup_game()
+            # Для других ошибок можно уведомить пользователя (не сбрасывая игру)
+            try:
+                await self.message.reply("⚠️ Ошибка обновления интерфейса. Попробуйте повторить действие.")
+            except Exception:
+                pass
+
 
 def upgrades_keyboard(user_id):
     buttons = []
@@ -1614,30 +1622,33 @@ async def profile_handler(callback: types.CallbackQuery):
         if not user:
             await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
             return
-        
-        # Рассчитываем цену выкупа
+
+        # Рассчитываем цену выкупа, если пользователь раб
         buyout_price = 0
         if user.get("owner"):
             base_price = user.get("base_price", 100)
-            buyout_price = int((base_price + user["balance"] * 0.1) * (1 + user.get("slave_level", 0) * 0.5))
+            try:
+                buyout_price = int((base_price + float(user.get("balance", 0)) * 0.1) * (1 + user.get("slave_level", 0) * 0.5))
+            except Exception as calc_err:
+                logging.error(f"Ошибка расчёта выкупа: {calc_err}")
+                buyout_price = base_price
             buyout_price = max(100, min(10000, buyout_price))
         
         # Получаем уровни улучшений
+        storage_level = user.get("upgrades", {}).get("storage", 0)
         barracks_level = user.get("upgrades", {}).get("barracks", 0)
         whip_level = user.get("upgrades", {}).get("whip", 0)
-        storage_level = user.get("upgrades", {}).get("storage", 0)
         
         # Рассчитываем пассивный доход в минуту
         passive_per_min = 1 + storage_level * 10  # Базовый доход + склад
-        
-        # Добавляем доход от рабов (с учетом налога 30% если пользователь сам раб)
         slave_income = 0
         for slave_id in user.get("slaves", []):
             if slave_id in users:
                 slave = users[slave_id]
-                slave_income += 100 * (1 + 0.3 * slave.get("slave_level", 0))
-        
-        # Если пользователь сам раб, вычитаем налог 30%
+                try:
+                    slave_income += 100 * (1 + 0.3 * slave.get("slave_level", 0))
+                except Exception as e:
+                    logging.error(f"Ошибка расчёта дохода раба: {e}")
         if user.get("owner"):
             passive_per_min += slave_income * 0.7 / 60
         else:
@@ -1646,7 +1657,7 @@ async def profile_handler(callback: types.CallbackQuery):
         # Формируем текст профиля
         text = [
             f"👑 <b>Профиль @{user.get('username', 'unknown')}</b>",
-            f"▸ 💰 Баланс: {user.get('balance', 0):.1f}₽",
+            f"▸ 💰 Баланс: {float(user.get('balance', 0)):.1f}₽",
             f"▸ 💸 Пассивный доход: {passive_per_min:.1f}₽/мин ({passive_per_min*60:.1f}₽/час)",
             f"▸ 👥 Уровень раба: {user.get('slave_level', 0)}",
             f"▸ 🛠 Улучшения: {sum(user.get('upgrades', {}).values())}",
@@ -1655,7 +1666,7 @@ async def profile_handler(callback: types.CallbackQuery):
             f"▸ ⛓ Кнуты: ур. {whip_level} (налог {10 + 2 * whip_level}%)"
         ]
         
-        # Добавляем информацию о времени до перепокупки (НОВЫЙ БЛОК)
+        # Добавляем информацию о защите от перекупа, если применимо
         if user.get("last_purchased"):
             cooldown = timedelta(hours=3)
             time_left = cooldown - (datetime.now() - user["last_purchased"])
@@ -1673,7 +1684,7 @@ async def profile_handler(callback: types.CallbackQuery):
         else:
             text.append("\n🔗 Вы свободный человек")
             
-        # Кнопка выкупа
+        # Формирование клавиатуры профиля
         keyboard = []
         if user.get("owner"):
             keyboard.append([
@@ -1694,6 +1705,7 @@ async def profile_handler(callback: types.CallbackQuery):
     except Exception as e:
         logging.error(f"Ошибка профиля: {e}", exc_info=True)
         await callback.answer("❌ Ошибка загрузки профиля", show_alert=True)
+
 
 async def autosave_task():
     while True:
