@@ -798,16 +798,19 @@ async def blackjack_handler(callback: types.CallbackQuery):
         user_id = callback.from_user.id
         action = callback.data.split("_")[1]
         
+        # Немедленная проверка наличия игры
         if user_id not in active_games:
-            # Пытаемся восстановить через 5 секунд
-            await asyncio.sleep(5)
-            if user_id not in active_games:
-                await callback.answer("🔄 Игра восстановлена!")
-                await play_21_handler(callback)
+            await callback.answer("❌ Активная игра не найдена! Начните новую.")
+            await show_bet_selection(callback.message)
             return
 
         game = active_games[user_id]
         
+        # Проверка статуса игры
+        if game.game_over:
+            await callback.answer("Эта игра уже завершена")
+            return
+
         # Обновляем время последнего действия
         game.last_action_time = datetime.now()
         
@@ -831,12 +834,25 @@ async def blackjack_handler(callback: types.CallbackQuery):
         await callback.answer()
 
     except Exception as e:
-        logging.error(f"Критическая ошибка игры: {e}")
-        await callback.answer("🌀 Перезапустите игру!")
+        logging.error(f"Ошибка игры: {e}")
+        await callback.answer("⚠️ Произошла ошибка, игра перезапущена!")
         if user_id in active_games:
             del active_games[user_id]
+        await show_bet_selection(callback.message)
 
 
+async def show_bet_selection(message: types.Message):
+    """Показывает меню выбора ставки"""
+    builder = InlineKeyboardBuilder()
+    bets = [500, 1000, 2000, 5000]
+    for bet in bets:
+        builder.button(text=f"{bet}₽", callback_data=f"bj_bet_{bet}")
+    builder.adjust(2)
+    
+    await message.edit_text(
+        "🎰 Выберите размер ставки:",
+        reply_markup=builder.as_markup()
+    )
 
 @dp.callback_query(F.data.startswith(CHECK_SUB))
 async def check_sub_callback(callback: types.CallbackQuery):
