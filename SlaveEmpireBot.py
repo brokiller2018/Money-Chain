@@ -1376,15 +1376,19 @@ async def buy_slave_handler(callback: types.CallbackQuery):
         buyer_id = callback.from_user.id
         slave_id = int(callback.data.replace(SLAVE_PREFIX, ""))
         
-        # Проверка существования пользователей
-        if buyer_id not in users or slave_id not in users:
-            await callback.answer("❌ Ошибка: пользователь не найден", show_alert=True)
+        # 1. Проверка существования пользователей
+        if buyer_id not in users:
+            await callback.answer("❌ Вы не зарегистрированы!", show_alert=True)
+            return
+            
+        if slave_id not in users:
+            await callback.answer("❌ Раб не найден в системе", show_alert=True)
             return
 
         buyer = users[buyer_id]
         slave = users[slave_id]
 
-        # Проверка лимита рабов
+        # 2. Проверка лимита рабов
         barracks_level = buyer.get("upgrades", {}).get("barracks", 0)
         slave_limit = 5 + 2 * barracks_level
         if len(buyer.get("slaves", [])) >= slave_limit:
@@ -1394,51 +1398,55 @@ async def buy_slave_handler(callback: types.CallbackQuery):
             )
             return
 
-        # Проверка щита защиты
+        # 3. Проверка щита защиты (с улучшенной обработкой)
         shield_active = slave.get("shield_active")
-        if isinstance(shield_active, str):
+        if shield_active:
             try:
-                shield_active = datetime.fromisoformat(shield_active)
-            except ValueError:
-                shield_active = None
+                if isinstance(shield_active, str):
+                    shield_active = datetime.fromisoformat(shield_active)
+                if shield_active and shield_active > datetime.now():
+                    await callback.answer(
+                        f"🛡 Цель защищена щитом до {shield_active.strftime('%d.%m %H:%M')}",
+                        show_alert=True
+                    )
+                    return
+            except Exception as e:
+                logging.error(f"Ошибка обработки щита: {e}")
 
-        if shield_active and shield_active > datetime.now():
-            shield_time = shield_active.strftime("%d.%m %H:%M")
-            await callback.answer(
-                f"🛡 Цель защищена щитом до {shield_time}",
-                show_alert=True
-            )
-            return
+        # 4. Проверка времени перекупа
+        last_purchased = slave.get("last_purchased")
+        if last_purchased:
+            try:
+                if isinstance(last_purchased, str):
+                    last_purchased = datetime.fromisoformat(last_purchased)
+                if (datetime.now() - last_purchased) < timedelta(hours=3):
+                    remaining = timedelta(hours=3) - (datetime.now() - last_purchased)
+                    hours = remaining.seconds // 3600
+                    minutes = (remaining.seconds % 3600) // 60
+                    await callback.answer(
+                        f"⌛ Раб доступен для перекупа через {hours}ч {minutes}м",
+                        show_alert=True
+                    )
+                    return
+            except Exception as e:
+                logging.error(f"Ошибка обработки last_purchased: {e}")
 
-        # Проверка времени с последней покупки
-        if slave.get("last_purchased"):
-            cooldown = timedelta(hours=3)
-            if datetime.now() - slave["last_purchased"] < cooldown:
-                remaining = cooldown - (datetime.now() - slave["last_purchased"])
-                hours = remaining.seconds // 3600
-                minutes = (remaining.seconds % 3600) // 60
-                await callback.answer(
-                    f"⌛ Раб доступен для перекупа через {hours}ч {minutes}м",
-                    show_alert=True
-                )
-                return
-
-        # Проверка на покупку самого себя
+        # 5. Проверка на покупку самого себя
         if slave_id == buyer_id:
             await callback.answer("❌ Нельзя купить самого себя!", show_alert=True)
             return
 
-        # Проверка иерархии рабства
+        # 6. Проверка иерархии
         if buyer.get("owner") == slave_id:
             await callback.answer("❌ Нельзя купить своего владельца!", show_alert=True)
             return
 
-        # Проверка двойного владения
+        # 7. Проверка двойного владения
         if slave.get("owner") == buyer_id:
             await callback.answer("❌ Этот раб уже принадлежит вам!", show_alert=True)
             return
 
-        # Проверка текущего владельца
+        # 8. Проверка текущего владельца
         previous_owner_id = slave.get("owner")
         if previous_owner_id and previous_owner_id != buyer_id:
             await callback.answer(
@@ -1447,77 +1455,83 @@ async def buy_slave_handler(callback: types.CallbackQuery):
             )
             return
 
-        price = slave_price(slave)
-        
-        # Проверка баланса
-        if buyer["balance"] < price:
+        # 9. Расчет цены
+        try:
+            price = slave_price(slave)
+        except Exception as e:
+            logging.error(f"Ошибка расчета цены: {e}")
+            await callback.answer("❌ Ошибка расчета цены", show_alert=True)
+            return
+
+        # 10. Проверка баланса
+        if buyer.get("balance", 0) < price:
             await callback.answer(
-                f"❌ Нужно {price}₽ (у вас {buyer['balance']:.0f}₽)",
+                f"❌ Недостаточно средств! Нужно {price}₽",
                 show_alert=True
             )
             return
 
-        # Логика покупки
-        if previous_owner_id:
-            previous_owner = users[previous_owner_id]
-            
-            # Удаляем из списка рабов предыдущего владельца
-            if slave_id in previous_owner.get("slaves", []):
-                previous_owner["slaves"].remove(slave_id)
-            
-            # Комиссия 30% предыдущему владельцу
-            commission = int(price * 0.3)
-            previous_owner["balance"] += commission
-            previous_owner["total_income"] += commission
-
-            # Снимаем кандалы при смене владельца
-            if "shackles" in previous_owner and slave_id in previous_owner["shackles"]:
-                del previous_owner["shackles"][slave_id]
-
-        # Основная транзакция
-        buyer["balance"] -= price
-        buyer.setdefault("slaves", []).append(slave_id)
-
-        # Обновление данных раба
-        current_level = slave.get("slave_level", 0)
-        slave["owner"] = buyer_id
-        slave["slave_level"] = min(current_level + 1, MAX_SLAVE_LEVEL)
-        slave["price"] = slave_price(slave)
-        slave["enslaved_date"] = datetime.now()
-        slave["last_purchased"] = datetime.now()  # Записываем время покупки
-
-        # Формирование сообщения
-        msg = [
-            f"✅ Куплен @{slave.get('username', 'безымянный')} за {price}₽",
-            f"▸ Уровень: {slave['slave_level']}",
-            f"▸ Новая цена: {slave['price']}₽",
-            f"▸ Доход/час: {int(100 * (1 + 0.3 * slave['slave_level']))}₽",
-            f"▸ Защита от перекупа: 3 часа"
-        ]
-        
-        if previous_owner_id:
-            msg.append(f"▸ Комиссия владельцу: {commission}₽")
-
-        # Уведомление раба
+        # 11. Процесс покупки
         try:
-            await bot.send_message(
-                slave_id,
-                f"⚡ Вы приобретены @{buyer.get('username', 'unknown')} "
-                f"за {price}₽ (уровень {slave['slave_level']})\n"
-                f"▸ Новый доход: {int(100 * (1 + 0.3 * slave['slave_level']))}₽/час"
-            )
-        except Exception as e:
-            logging.error(f"Ошибка отправки уведомления рабу: {e}")
+            # Если был предыдущий владелец
+            if previous_owner_id and previous_owner_id in users:
+                previous_owner = users[previous_owner_id]
+                
+                # Удаляем из списка рабов
+                if slave_id in previous_owner.get("slaves", []):
+                    previous_owner["slaves"].remove(slave_id)
+                
+                # Начисляем комиссию (30%)
+                commission = int(price * 0.3)
+                previous_owner["balance"] += commission
+                previous_owner["total_income"] += commission
 
-        save_db()
-        await callback.message.edit_text("\n".join(msg), reply_markup=main_keyboard())
-        await callback.answer()
+            # Обновляем данные покупателя
+            buyer["balance"] -= price
+            buyer.setdefault("slaves", []).append(slave_id)
+
+            # Обновляем данные раба
+            slave["owner"] = buyer_id
+            slave["slave_level"] = min(slave.get("slave_level", 0) + 1, MAX_SLAVE_LEVEL)
+            slave["price"] = slave_price(slave)
+            slave["enslaved_date"] = datetime.now()
+            slave["last_purchased"] = datetime.now()
+
+            # Формируем сообщение об успехе
+            message_text = [
+                f"✅ Куплен @{slave.get('username', 'unknown')} за {price}₽",
+                f"▸ Уровень: {slave['slave_level']}",
+                f"▸ Новая цена: {slave['price']}₽",
+                f"▸ Доход/час: {int(100 * (1 + 0.3 * slave['slave_level']))}₽"
+            ]
+            
+            if previous_owner_id:
+                message_text.append(f"▸ Комиссия предыдущему владельцу: {commission}₽")
+
+            # Уведомление раба
+            try:
+                await bot.send_message(
+                    slave_id,
+                    f"⚡ Вы приобретены @{buyer.get('username', 'unknown')} "
+                    f"за {price}₽ (уровень {slave['slave_level']})"
+                )
+            except Exception as e:
+                logging.error(f"Не удалось уведомить раба: {e}")
+
+            save_db()
+            await callback.message.edit_text(
+                "\n".join(message_text),
+                reply_markup=main_keyboard()
+            )
+            await callback.answer()
+
+        except Exception as e:
+            logging.error(f"Критическая ошибка при покупке: {e}", exc_info=True)
+            await callback.answer("❌ Критическая ошибка при покупке", show_alert=True)
 
     except Exception as e:
-        logging.error(f"Ошибка покупки раба: {e}", exc_info=True)
-        save_db()
-        await callback.answer("⚠️ Произошла ошибка при покупке", show_alert=True)
-
+        logging.error(f"Ошибка в обработчике покупки: {e}", exc_info=True)
+        await callback.answer("⚠️ Произошла непредвиденная ошибка", show_alert=True)
 
 @dp.callback_query(F.data.startswith(BUYOUT_PREFIX))
 async def buyout_handler(callback: types.CallbackQuery):
