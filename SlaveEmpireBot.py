@@ -680,45 +680,45 @@ async def handle_top_user_command(message: types.Message):
 async def show_random_slaves(callback: types.CallbackQuery):
     try:
         user_id = callback.from_user.id
-        user = users.get(user_id)
-        
-        if not user:
+        if user_id not in users:
             await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
             return
 
+        user = users[user_id]
         barracks_level = user.get("upgrades", {}).get("barracks", 0)
         slave_limit = 5 + 2 * barracks_level
-        current_slaves = len(user.get("slaves", []))
         
-        if current_slaves >= slave_limit:
+        if len(user.get("slaves", [])) >= slave_limit:
             await callback.answer(f"❌ Лимит рабов ({slave_limit})", show_alert=True)
             return
 
         available = []
         for slave_id, slave_data in users.items():
-            # Проверяем что slave_data существует
-            if not slave_data:
+            # Проверяем основные условия
+            if not slave_data or slave_id == user_id:
                 continue
                 
-            if slave_id == user_id:
+            # Проверяем что slave_data содержит все нужные поля
+            if not all(key in slave_data for key in ['owner', 'shield_active', 'last_purchased', 'username']):
                 continue
                 
-            if slave_data.get('owner') == user_id:
+            # Проверка владельца
+            if slave_data['owner'] == user_id:
                 continue
 
             # Проверка щита
-            shield = slave_data.get('shield_active')
+            shield = slave_data['shield_active']
             if shield:
                 try:
                     if isinstance(shield, str):
                         shield = datetime.fromisoformat(shield)
-                    if shield > datetime.now():
+                    if shield and shield > datetime.now():
                         continue
                 except:
                     continue
 
             # Проверка времени перекупа
-            last_purchased = slave_data.get("last_purchased")
+            last_purchased = slave_data['last_purchased']
             if last_purchased:
                 try:
                     if isinstance(last_purchased, str):
@@ -728,65 +728,50 @@ async def show_random_slaves(callback: types.CallbackQuery):
                 except:
                     continue
             
-            # Проверка username
-            if not slave_data.get('username'):
-                continue
-            
             available.append((slave_id, slave_data))
 
         if not available:
             await callback.answer("😢 Нет доступных рабов", show_alert=True)
             return
             
-        # Сортировка по цене
+        # Сортировка и выбор топ-10
         available.sort(
             key=lambda x: x[1].get('price', 100) * (1 + 0.5 * x[1].get('slave_level', 0)),
             reverse=True
         )
         selected = available[:10]
 
+        # Формируем кнопки
         buttons = []
         for slave_id, slave_data in selected:
             try:
                 price = slave_data.get('price', 100)
                 level = slave_data.get('slave_level', 0)
                 income = int(100 * (1 + 0.3 * level))
-                username = slave_data.get('username', 'unknown').replace('@', '')[:15]
+                username = slave_data.get('username', 'unknown')[:20]
                 
-                btn_text = (
-                    f"👤 Ур.{level} @{username}\n"
-                    f"💰 {price}₽ | 🏷 {income}₽/час"
-                )
-                
-                buttons.append([
-                    InlineKeyboardButton(
-                        text=btn_text,
-                        callback_data=f"{SLAVE_PREFIX}{slave_id}"
-                    )
-                ])
+                buttons.append([InlineKeyboardButton(
+                    text=f"👤 Ур.{level} @{username} | {price}₽",
+                    callback_data=f"{SLAVE_PREFIX}{slave_id}"
+                )])
             except Exception as e:
-                logging.error(f"Error creating button: {e}")
+                logging.error(f"Ошибка формирования кнопки: {e}")
                 continue
 
         buttons.append([
-            InlineKeyboardButton(
-                text=f"🔄 Обновить ({len(available)})",
-                callback_data="random_slaves"
-            )
+            InlineKeyboardButton(text="🔄 Обновить", callback_data="random_slaves"),
+            InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)
         ])
-        buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=BUY_MENU)])
 
         await callback.message.edit_text(
-            "🎲 Доступные рабы (Топ-10):\n"
-            f"▸ Лимит: {current_slaves}/{slave_limit}\n"
-            f"▸ Защита: 3ч",
+            "🎲 Доступные рабы (Топ-10):",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons)
         )
         await callback.answer()
 
     except Exception as e:
-        logging.error(f"Random slaves error: {e}", exc_info=True)
-        await callback.answer("⚠️ Ошибка, попробуйте позже")
+        logging.error(f"Ошибка в random_slaves: {e}", exc_info=True)
+        await callback.answer("⚠️ Ошибка загрузки списка", show_alert=True)
 
     
 @dp.callback_query(F.data.startswith("bj_"))
