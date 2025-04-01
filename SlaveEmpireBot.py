@@ -287,21 +287,21 @@ class BlackjackGame:
             logging.error(f"Ошибка отображения: {e}")
 
     async def cleanup_games():
-    while True:
-        await asyncio.sleep(300)
-        try:
-            current_time = datetime.now()
-            expired = []
-            for user_id, game in active_games.items():
-                # Условие для удаления только завершенных или неактивных игр
-                if game.game_over or (current_time - game.last_action_time).total_seconds() > 1800:
-                    expired.append(user_id)
-
-            for user_id in expired:
-                del active_games[user_id]
-                
-        except Exception as e:
-            logging.error(f"Ошибка очистки игр: {e}")
+        while True:
+            await asyncio.sleep(300)
+            try:
+                current_time = datetime.now()
+                expired = []
+                for user_id, game in active_games.items():
+                    # Условие для удаления только завершенных или неактивных игр
+                    if game.game_over or (current_time - game.last_action_time).total_seconds() > 1800:
+                        expired.append(user_id)
+    
+                for user_id in expired:
+                    del active_games[user_id]
+                    
+            except Exception as e:
+                logging.error(f"Ошибка очистки игр: {e}")
 
 
 
