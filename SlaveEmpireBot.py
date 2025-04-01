@@ -265,34 +265,34 @@ class BlackjackGame:
             logging.error(f"Ошибка хода дилера: {e}")
             await self.cleanup_game()
 
-   async def update_display(self):
-    try:
-        # Показываем статус дилера
-        dealer_status = "Карта дилера: " 
-        if self.game_over:
-            dealer_status = f"Дилер: {self.calculate_hand(self.dealer_hand)}"
-        else:
-            dealer_status = f"Дилер: {self.dealer_hand[0]} ?"
-            
-        await self.message.edit_text(
-            f"💰 Ставка: {self.bet}₽\n"
-            f"Ваши карты: {self.player_hand} ({self.calculate_hand(self.player_hand)})\n"
-            f"{dealer_status}",
-            reply_markup=... 
-        )
-    except Exception as e:
-        logging.error(f"Ошибка отображения: {e}")
+    async def update_display(self):
+        try:
+            # Показываем статус дилера
+            dealer_status = "Карта дилера: " 
+            if self.game_over:
+                dealer_status = f"Дилер: {self.calculate_hand(self.dealer_hand)}"
+            else:
+                dealer_status = f"Дилер: {self.dealer_hand[0]} ?"
+                
+            await self.message.edit_text(
+                f"💰 Ставка: {self.bet}₽\n"
+                f"Ваши карты: {self.player_hand} ({self.calculate_hand(self.player_hand)})\n"
+                f"{dealer_status}",
+                reply_markup=... 
+            )
+        except Exception as e:
+            logging.error(f"Ошибка отображения: {e}")
 
     async def cleanup_games():
-    while True:
-        await asyncio.sleep(1800)  # 30 минут вместо 5
-        # Очищаем только завершенные игры
-        current_time = datetime.now()
-        expired = [uid for uid, game in active_games.items() 
-                  if game.game_over or (current_time - game.last_action_time).seconds > 3600]
-        
-        for uid in expired:
-            del active_games[uid]
+        while True:
+            await asyncio.sleep(1800)  # 30 минут вместо 5
+            # Очищаем только завершенные игры
+            current_time = datetime.now()
+            expired = [uid for uid, game in active_games.items() 
+                      if game.game_over or (current_time - game.last_action_time).seconds > 3600]
+            
+            for uid in expired:
+                del active_games[uid]
 
 
 def upgrades_keyboard(user_id):
