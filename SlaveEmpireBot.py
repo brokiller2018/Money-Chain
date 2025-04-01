@@ -162,7 +162,7 @@ class Card:
 
 # Класс для игры в Blackjack
 class BlackjackGame:
-     def __init__(self, user_id: int, bet: int, bot: Bot):
+    def __init__(self, user_id: int, bet: int, bot: Bot):
         self.user_id = user_id  # Добавляем сохранение user_id
         self.bet = bet
         self.bot = bot
@@ -172,7 +172,7 @@ class BlackjackGame:
         self.game_over = False
         self.message = None
         self.last_action_time = datetime.now()  # Добавляем инициализацию времени
-        
+
     async def start_game(self, message: types.Message):
         try:
             self.message = message
