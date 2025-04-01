@@ -188,6 +188,7 @@ class BlackjackGame:
         except Exception as e:
             logging.error(f"Ошибка старта игры: {e}")
             await self.cleanup_game()
+
     def create_deck(self):
         """Создает и возвращает колоду из 52 карт"""
         suits = ['Spades', 'Hearts', 'Diamonds', 'Clubs']
