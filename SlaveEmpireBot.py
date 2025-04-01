@@ -39,7 +39,6 @@ SHACKLES_PREFIX = "shackles_"
 MAX_SLAVE_LEVEL = 15
 DAILY_WORK_LIMIT = 10
 MAX_BARRACKS_LEVEL = 10
-DAILY_WORK_LIMIT = 7
 MIN_SLAVES_FOR_RANDOM = 3 
 
 # Инициализация
@@ -163,29 +162,32 @@ class Card:
 
 # Класс для игры в Blackjack
 class BlackjackGame:
-    def __init__(self, user_id: int, bet: int, bot: Bot):
-        self.game_over = False  # Добавляем явную инициализацию
-        self.deck = []  # Инициализируем пустую колоду
+     def __init__(self, user_id: int, bet: int, bot: Bot):
+        self.user_id = user_id  # Добавляем сохранение user_id
+        self.bet = bet
+        self.bot = bot
+        self.deck = self.create_deck()
+        self.player_hand = []
+        self.dealer_hand = []
+        self.game_over = False
+        self.message = None
+        self.last_action_time = datetime.now()  # Добавляем инициализацию времени
         
     async def start_game(self, message: types.Message):
         try:
-            # Явная повторная инициализация
+            self.message = message
             self.deck = self.create_deck()
             random.shuffle(self.deck)
-            
-            # Раздача карт
             self.player_hand = [self.deal_card(), self.deal_card()]
             self.dealer_hand = [self.deal_card(), self.deal_card()]
             
-            # Принудительное сохранение
-            active_games[self.user_id] = self
+            active_games[self.user_id] = self  # Явное сохранение
             
             await self.update_display()
             
         except Exception as e:
             logging.error(f"Ошибка старта игры: {e}")
             await self.cleanup_game()
-
     def create_deck(self):
         """Создает и возвращает колоду из 52 карт"""
         suits = ['Spades', 'Hearts', 'Diamonds', 'Clubs']
@@ -284,15 +286,22 @@ class BlackjackGame:
             logging.error(f"Ошибка отображения: {e}")
 
     async def cleanup_games():
-        while True:
-            await asyncio.sleep(1800)  # 30 минут вместо 5
-            # Очищаем только завершенные игры
+    while True:
+        await asyncio.sleep(300)
+        try:
             current_time = datetime.now()
-            expired = [uid for uid, game in active_games.items() 
-                      if game.game_over or (current_time - game.last_action_time).seconds > 3600]
-            
-            for uid in expired:
-                del active_games[uid]
+            expired = []
+            for user_id, game in active_games.items():
+                # Условие для удаления только завершенных или неактивных игр
+                if game.game_over or (current_time - game.last_action_time).total_seconds() > 1800:
+                    expired.append(user_id)
+
+            for user_id in expired:
+                del active_games[user_id]
+                
+        except Exception as e:
+            logging.error(f"Ошибка очистки игр: {e}")
+
 
 
 def upgrades_keyboard(user_id):
@@ -1294,21 +1303,22 @@ async def blackjack_bet_handler(callback: types.CallbackQuery):
         
         # Удаляем старые игры
         if user_id in active_games:
-            del active_games[user_id]  # Важно: принудительная очистка
-        
-        # Создаем новую игру
-        game = BlackjackGame(user_id, bet, bot)
+            del active_games[user_id]
+
+        # Создаем новую игру с ВСЕМИ параметрами
+        game = BlackjackGame(
+            user_id=user_id,
+            bet=bet,
+            bot=bot
+        )
         active_games[user_id] = game
         
-        # Явная инициализация колоды
-        game.deck = game.create_deck()
-        random.shuffle(game.deck)
-        
+        # Запускаем игру
         await game.start_game(callback.message)
         
     except Exception as e:
         logging.error(f"Ошибка создания игры: {e}")
-        await callback.answer("❌ Не удалось начать игру")
+        await callback.answer("❌ Ошибка при создании игры!")
 
 @dp.callback_query(F.data == "select_shackles")
 async def select_shackles(callback: types.CallbackQuery):
