@@ -106,6 +106,30 @@ def main_keyboard():
 def get_db_connection():
     return psycopg2.connect(os.getenv("DATABASE_URL"))
 
+
+def get_game_keyboard(game: BlackjackGame) -> InlineKeyboardMarkup:
+    """Создает клавиатуру для игровых действий"""
+    keyboard = InlineKeyboardBuilder()
+    
+    # Кнопки действий с новыми префиксами
+    keyboard.button(
+        text="🎯 Взять", 
+        callback_data="bj_action_hit"
+    )
+    keyboard.button(
+        text="✋ Стоп", 
+        callback_data="bj_action_stand"
+    )
+    
+    if len(game.player_hand) == 2 and not game.game_over:
+        keyboard.button(
+            text="🔼 Удвоить", 
+            callback_data="bj_action_double"
+        )
+    
+    keyboard.adjust(2)
+    return keyboard.as_markup()
+
 async def cleanup_games():
     while True:
         await asyncio.sleep(300)
@@ -269,31 +293,21 @@ class BlackjackGame:
             await self.cleanup_game()
 
     async def update_display(self):
-        try:
-            dealer_status = "Карта дилера: " 
-            if self.game_over:
-                dealer_status = f"Дилер: {self.calculate_hand(self.dealer_hand)}"
-            else:
-                dealer_status = f"Дилер: {self.dealer_hand[0]} ?"
-                
-            # Создаем клавиатуру с кнопками действий
-            keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="🎯 Взять", callback_data="bj_hit")
-            keyboard.button(text="✋ Стоп", callback_data="bj_stand")
+    try:
+        dealer_status = "Карта дилера: " 
+        if self.game_over:
+            dealer_status = f"Дилер: {self.calculate_hand(self.dealer_hand)}"
+        else:
+            dealer_status = f"Дилер: {self.dealer_hand[0]} ?"
             
-            if len(self.player_hand) == 2 and not self.game_over:
-                keyboard.button(text="🔼 Удвоить", callback_data="bj_double")
-                
-            keyboard.adjust(2)
-            
-            await self.message.edit_text(
-                f"💰 Ставка: {self.bet}₽\n"
-                f"Ваши карты: {self.player_hand} ({self.calculate_hand(self.player_hand)})\n"
-                f"{dealer_status}",
-                reply_markup=keyboard.as_markup()
-            )
-        except Exception as e:
-            logging.error(f"Ошибка отображения: {e}")
+        await self.message.edit_text(
+            f"💰 Ставка: {self.bet}₽\n"
+            f"Ваши карты: {self.player_hand} ({self.calculate_hand(self.player_hand)})\n"
+            f"{dealer_status}",
+            reply_markup=get_game_keyboard(self)  # Используем новую функцию
+        )
+    except Exception as e:
+        logging.error(f"Ошибка отображения: {e}")
 
     async def cleanup_games():
         while True:
@@ -783,22 +797,22 @@ async def show_random_slaves(callback: types.CallbackQuery):
         await callback.answer("⚠️ Ошибка загрузки списка", show_alert=True)
 
     
-@dp.callback_query(F.data.startswith("bj_"))
-async def blackjack_handler(callback: types.CallbackQuery):
+@dp.callback_query(F.data.startswith("bj_action_"))
+async def blackjack_action_handler(callback: types.CallbackQuery):
     try:
         user_id = callback.from_user.id
-        action = callback.data.split("_")[1]
+        action = callback.data.split("_")[2]  # hit, stand, double
         
         if user_id not in active_games:
-            await callback.answer("❌ Начните новую игру!", show_alert=True)
-            await show_bet_selection(callback.message)
+            await callback.answer("❌ Начните новую игру через меню!", show_alert=True)
             return
 
         game = active_games[user_id]
         
         if game.game_over:
-            await callback.answer("Игра завершена")
+            await callback.answer("Эта игра уже завершена")
             return
+
         # Обновляем время последнего действия
         game.last_action_time = datetime.now()
         
@@ -822,12 +836,10 @@ async def blackjack_handler(callback: types.CallbackQuery):
         await callback.answer()
 
     except Exception as e:
-        logging.error(f"Ошибка игры: {e}")
+        logging.error(f"Ошибка в игре: {e}")
         await callback.answer("⚠️ Произошла ошибка, игра перезапущена!")
         if user_id in active_games:
             del active_games[user_id]
-        await show_bet_selection(callback.message)
-
 
 async def show_bet_selection(message: types.Message):
     """Показывает меню выбора ставки"""
@@ -1298,16 +1310,16 @@ async def blackjack_bet_handler(callback: types.CallbackQuery):
         user_id = callback.from_user.id
         bet = int(callback.data.split("_")[2])
         
-        # Проверяем баланс
+        # Удаляем старые игры
+        if user_id in active_games:
+            del active_games[user_id]
+
+        # Проверка баланса
         if users[user_id]["balance"] < bet:
             await callback.answer("❌ Недостаточно средств!", show_alert=True)
             return
 
-        # Снимаем деньги сразу
-        users[user_id]["balance"] -= bet
-        save_db()
-        
-        # Создаем игру
+        # Создаем новую игру
         game = BlackjackGame(
             user_id=user_id,
             bet=bet,
@@ -1315,6 +1327,7 @@ async def blackjack_bet_handler(callback: types.CallbackQuery):
         )
         active_games[user_id] = game
         
+        # Запускаем игру
         await game.start_game(callback.message)
         
     except Exception as e:
