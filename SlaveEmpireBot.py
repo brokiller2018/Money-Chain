@@ -1292,24 +1292,13 @@ async def play_21_handler(callback: types.CallbackQuery):
     try:
         user_id = callback.from_user.id
         if user_id in active_games:
-            # Пытаемся восстановить прерванную игру
             game = active_games[user_id]
             if not game.game_over:
                 await game.update_display()
                 return
         
-        # Показываем меню выбора ставки
-        builder = InlineKeyboardBuilder()
-        bets = [500, 1000, 2000, 5000]
-        for bet in bets:
-            builder.button(text=f"{bet}₽", callback_data=f"bj_bet_{bet}")
-        builder.adjust(2)
-        
-        await callback.message.edit_text(
-            "🎰 <b>Игра 21 (Blackjack)</b>\n\nВыберите ставку:",
-            reply_markup=builder.as_markup()
-        )
-        
+        await show_bet_selection(callback.message)
+
     except Exception as e:
         logging.error(f"Ошибка меню игры: {e}")
         await callback.answer("⚠️ Ошибка запуска")
