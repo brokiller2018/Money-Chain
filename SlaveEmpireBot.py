@@ -48,7 +48,9 @@ dp = Dispatcher(storage=storage)
 
 # База данных
 users = {}
-user_search_cache = {}
+user_search_cache = {
+    'awaiting_bet': set()  # Используем set для избежания дубликатов
+}
 active_games = {}
 # Улучшения
 upgrades = {
@@ -109,15 +111,21 @@ def get_db_connection():
 async def show_bet_selection(message: types.Message):
     """Показывает меню выбора ставки с кастомным вводом"""
     builder = InlineKeyboardBuilder()
-    bets = [500, 1000]
+    
+    # Стандартные ставки
+    bets = [500, 1000, 2000, 5000]
     for bet in bets:
         builder.button(text=f"{bet}₽", callback_data=f"bj_bet_{bet}")
+    
+    # Дополнительные кнопки
     builder.button(text="🎲 Своя ставка", callback_data="bj_custom_bet")
-    builder.button(text="🔙 Назад", callback_data=MAIN_MENU)
-    builder.adjust(2, 1)
+    builder.button(text="🔙 В меню", callback_data=MAIN_MENU)
+    
+    # Оптимизация расположения
+    builder.adjust(2, 2, 1)
     
     await message.edit_text(
-        "🎰 Выберите или введите ставку (мин 100₽, макс 5000₽):",
+        "🎰 Выберите или введите ставку:",
         reply_markup=builder.as_markup()
     )
 
@@ -871,50 +879,49 @@ async def handle_custom_bet_input(message: Message):
         if user_id not in users:
             return
 
-        # Проверяем контекст - был ли запрос на ставку
-        if not user_id in user_search_cache.get('awaiting_bet', []):
-            return
+        # Проверяем, ожидаем ли мы ставку от этого пользователя
+        if user_id not in user_search_cache['awaiting_bet']:
+            return  # Игнорируем сообщения не в контексте ставки
 
-        # Удаляем флаг ожидания ставки
-        user_search_cache['awaiting_bet'].remove(user_id)
+        # Удаляем из ожидания сразу после получения сообщения
+        user_search_cache['awaiting_bet'].discard(user_id)
 
+        # Валидация ввода
         if not message.text.isdigit():
-            await message.reply("❌ Введите число!", reply_markup=main_keyboard())
+            await message.reply("❌ Введите целое число!", reply_markup=main_keyboard())
             return
 
         bet = int(message.text)
         MIN_BET = 100
         MAX_BET = 20000
-        
-        if bet < MIN_BET or bet > MAX_BET:
+
+        if not (MIN_BET <= bet <= MAX_BET):
             await message.reply(
                 f"❌ Ставка должна быть от {MIN_BET}₽ до {MAX_BET}₽",
                 reply_markup=main_keyboard()
             )
             return
 
+        # Проверка баланса
         if users[user_id]["balance"] < bet:
             await message.reply(
-                "❌ Недостаточно средств на балансе",
+                f"❌ Недостаточно средств! Ваш баланс: {users[user_id]['balance']}₽",
                 reply_markup=main_keyboard()
             )
             return
 
-        # Удаляем предыдущую игру
+        # Очистка предыдущей игры
         if user_id in active_games:
             del active_games[user_id]
 
-        # Создаем новую игру
+        # Создание новой игры
         game = BlackjackGame(user_id, bet, bot)
         active_games[user_id] = game
         await game.start_game(message)
 
     except Exception as e:
-        logging.error(f"Ошибка кастомной ставки: {e}")
-        await message.answer(
-            "❌ Ошибка обработки ставки",
-            reply_markup=main_keyboard()
-        )
+        logging.error(f"Ошибка ввода ставки: {e}", exc_info=True)
+        await message.answer("❌ Ошибка обработки ставки", reply_markup=main_keyboard())
 
 @dp.callback_query(F.data == SEARCH_USER)
 async def search_user_handler(callback: types.CallbackQuery):
@@ -1381,10 +1388,13 @@ async def select_shackles(callback: types.CallbackQuery):
 # Команда для админа (/fix_economy), чтобы сбросить аномальные балансы
 @dp.callback_query(F.data == "bj_custom_bet")
 async def handle_custom_bet(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user_search_cache['awaiting_bet'].add(user_id)  # Добавляем в ожидание
+    
     await callback.message.edit_text(
-        "💎 Введите сумму ставки цифрами (мин 100₽, макс 5000₽):",
+        "💎 Введите сумму ставки цифрами (мин 100₽, макс 20000₽):",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="play_21")]]
+            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="bj_cancel_bet")]]
         )
     )
     await callback.answer()
@@ -1581,6 +1591,15 @@ async def buy_slave_handler(callback: types.CallbackQuery):
         logging.error(f"Ошибка в обработчике покупки: {e}", exc_info=True)
         await callback.answer("⚠️ Произошла непредвиденная ошибка", show_alert=True)
 
+@dp.callback_query(F.data == "bj_cancel_bet")
+async def cancel_bet_handler(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id in user_search_cache['awaiting_bet']:
+        user_search_cache['awaiting_bet'].remove(user_id)
+    
+    await show_bet_selection(callback.message)
+    await callback.answer()
+
 @dp.callback_query(F.data.startswith(BUYOUT_PREFIX))
 async def buyout_handler(callback: types.CallbackQuery):
     try:
@@ -1766,6 +1785,7 @@ async def profile_handler(callback: types.CallbackQuery):
     except Exception as e:
         logging.error(f"Ошибка профиля: {e}", exc_info=True)
         await callback.answer("❌ Ошибка загрузки. Попробуйте позже.", show_alert=True)
+
 
 
 async def autosave_task():
