@@ -211,28 +211,6 @@ class BlackjackGame:
             aces -= 1
         return value
 
-    def get_game_keyboard(game: BlackjackGame) -> InlineKeyboardMarkup:
-        """Создает клавиатуру для игровых действий"""
-        keyboard = InlineKeyboardBuilder()
-        
-        # Кнопки действий с новыми префиксами
-        keyboard.button(
-            text="🎯 Взять", 
-            callback_data="bj_action_hit"
-        )
-        keyboard.button(
-            text="✋ Стоп", 
-            callback_data="bj_action_stand"
-        )
-        
-        if len(game.player_hand) == 2 and not game.game_over:
-            keyboard.button(
-                text="🔼 Удвоить", 
-                callback_data="bj_action_double"
-            )
-        
-        keyboard.adjust(2)
-        return keyboard.as_markup()
 
     async def end_game(self, result: str):
         """Завершает игру и обрабатывает результат"""
@@ -328,6 +306,28 @@ class BlackjackGame:
                 logging.error(f"Ошибка очистки игр: {e}")
 
 
+def get_game_keyboard(game: BlackjackGame) -> InlineKeyboardMarkup:
+        """Создает клавиатуру для игровых действий"""
+        keyboard = InlineKeyboardBuilder()
+        
+        # Кнопки действий с новыми префиксами
+        keyboard.button(
+            text="🎯 Взять", 
+            callback_data="bj_action_hit"
+        )
+        keyboard.button(
+            text="✋ Стоп", 
+            callback_data="bj_action_stand"
+        )
+        
+        if len(game.player_hand) == 2 and not game.game_over:
+            keyboard.button(
+                text="🔼 Удвоить", 
+                callback_data="bj_action_double"
+            )
+        
+        keyboard.adjust(2)
+        return keyboard.as_markup()
 
 def upgrades_keyboard(user_id):
     buttons = []
