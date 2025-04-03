@@ -213,47 +213,47 @@ class BlackjackGame:
 
 
     async def end_game(self, result: str):
-    try:
-        self.game_over = True
-        player_value = self.calculate_hand(self.player_hand)
-        dealer_value = self.calculate_hand(self.dealer_hand)
-
-        user = users.get(self.user_id)
-        if not user:
-            raise ValueError(f"User {self.user_id} not found")
-
-        # Удаляем игру из активных перед изменением баланса
-        if self.user_id in active_games:
-            del active_games[self.user_id]
-
-        # Расчет результата
-        if result == 'blackjack':
-            win_amount = int(self.bet * 2.5)
-            user["balance"] += win_amount
-            text = f"🎉 Blackjack! Выигрыш: {win_amount}₽!"
-        elif result == 'win':
-            user["balance"] += self.bet
-            text = f"🎉 Выигрыш: {self.bet}₽!"
-        elif result == 'draw':
-            text = "🤝 Ничья!"
-        else:
-            user["balance"] -= self.bet
-            text = f"💸 Проигрыш: {self.bet}₽"
-
-        save_db()  # Сохраняем изменения баланса
-
-        await self.message.edit_text(
-            f"{text}\n\n"
-            f"Ваши карты: {self.player_hand} ({player_value})\n"
-            f"Карты дилера: {self.dealer_hand} ({dealer_value})",
-            reply_markup=main_keyboard()
-        )
-
-    except Exception as e:
-        logging.error(f"Ошибка завершения игры: {e}")
-        if self.user_id in active_games:
-            del active_games[self.user_id]
-        await self.message.answer("⚠️ Игра завершена", reply_markup=main_keyboard())
+        try:
+            self.game_over = True
+            player_value = self.calculate_hand(self.player_hand)
+            dealer_value = self.calculate_hand(self.dealer_hand)
+    
+            user = users.get(self.user_id)
+            if not user:
+                raise ValueError(f"User {self.user_id} not found")
+    
+            # Удаляем игру из активных перед изменением баланса
+            if self.user_id in active_games:
+                del active_games[self.user_id]
+    
+            # Расчет результата
+            if result == 'blackjack':
+                win_amount = int(self.bet * 2.5)
+                user["balance"] += win_amount
+                text = f"🎉 Blackjack! Выигрыш: {win_amount}₽!"
+            elif result == 'win':
+                user["balance"] += self.bet
+                text = f"🎉 Выигрыш: {self.bet}₽!"
+            elif result == 'draw':
+                text = "🤝 Ничья!"
+            else:
+                user["balance"] -= self.bet
+                text = f"💸 Проигрыш: {self.bet}₽"
+    
+            save_db()  # Сохраняем изменения баланса
+    
+            await self.message.edit_text(
+                f"{text}\n\n"
+                f"Ваши карты: {self.player_hand} ({player_value})\n"
+                f"Карты дилера: {self.dealer_hand} ({dealer_value})",
+                reply_markup=main_keyboard()
+            )
+    
+        except Exception as e:
+            logging.error(f"Ошибка завершения игры: {e}")
+            if self.user_id in active_games:
+                del active_games[self.user_id]
+            await self.message.answer("⚠️ Игра завершена", reply_markup=main_keyboard())
 
     async def dealer_turn(self):
         """Обрабатывает ход дилера"""
