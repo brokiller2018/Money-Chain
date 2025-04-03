@@ -213,53 +213,47 @@ class BlackjackGame:
 
 
     async def end_game(self, result: str):
-        """Завершает игру и обрабатывает результат"""
-        try:
-            self.game_over = True
-            player_value = self.calculate_hand(self.player_hand)
-            dealer_value = self.calculate_hand(self.dealer_hand)
+    try:
+        self.game_over = True
+        player_value = self.calculate_hand(self.player_hand)
+        dealer_value = self.calculate_hand(self.dealer_hand)
 
-            # Определяем результат если не передан явно
-            if not result:
-                if player_value > 21:
-                    result = 'lose'
-                elif dealer_value > 21 or player_value > dealer_value:
-                    result = 'win'
-                elif player_value == dealer_value:
-                    result = 'draw'
-                else:
-                    result = 'lose'
+        user = users.get(self.user_id)
+        if not user:
+            raise ValueError(f"User {self.user_id} not found")
 
-            user = users.get(self.user_id)
-            if not user:
-                raise ValueError(f"User {self.user_id} not found")
+        # Удаляем игру из активных перед изменением баланса
+        if self.user_id in active_games:
+            del active_games[self.user_id]
 
-            # Обработка результатов
-            if result == 'blackjack':
-                win_amount = int(self.bet * 2.5)
-                user["balance"] += win_amount
-                text = f"🎉 Blackjack! Выигрыш: {win_amount}₽!"
-            elif result == 'win':
-                user["balance"] += self.bet
-                text = f"🎉 Выигрыш: {self.bet}₽!"
-            elif result == 'draw':
-                text = "🤝 Ничья!"
-            else:
-                user["balance"] -= self.bet
-                text = f"💸 Проигрыш: {self.bet}₽"
+        # Расчет результата
+        if result == 'blackjack':
+            win_amount = int(self.bet * 2.5)
+            user["balance"] += win_amount
+            text = f"🎉 Blackjack! Выигрыш: {win_amount}₽!"
+        elif result == 'win':
+            user["balance"] += self.bet
+            text = f"🎉 Выигрыш: {self.bet}₽!"
+        elif result == 'draw':
+            text = "🤝 Ничья!"
+        else:
+            user["balance"] -= self.bet
+            text = f"💸 Проигрыш: {self.bet}₽"
 
-            # Обновляем сообщение
-            await self.message.edit_text(
-                f"{text}\n\n"
-                f"Ваши карты: {self.player_hand} ({player_value})\n"
-                f"Карты дилера: {self.dealer_hand} ({dealer_value})",
-                reply_markup=main_keyboard()
-            )
+        save_db()  # Сохраняем изменения баланса
 
-            await self.cleanup_game()
-        except Exception as e:
-            logging.error(f"Ошибка завершения игры: {e}")
-            await self.cleanup_game()
+        await self.message.edit_text(
+            f"{text}\n\n"
+            f"Ваши карты: {self.player_hand} ({player_value})\n"
+            f"Карты дилера: {self.dealer_hand} ({dealer_value})",
+            reply_markup=main_keyboard()
+        )
+
+    except Exception as e:
+        logging.error(f"Ошибка завершения игры: {e}")
+        if self.user_id in active_games:
+            del active_games[self.user_id]
+        await self.message.answer("⚠️ Игра завершена", reply_markup=main_keyboard())
 
     async def dealer_turn(self):
         """Обрабатывает ход дилера"""
@@ -843,17 +837,29 @@ async def blackjack_action_handler(callback: types.CallbackQuery):
             del active_games[user_id]
 
 async def show_bet_selection(message: types.Message):
-    """Показывает меню выбора ставки"""
+    """Показывает меню выбора ставки с кастомным вводом"""
     builder = InlineKeyboardBuilder()
-    bets = [500, 1000, 2000, 5000]
+    bets = [500, 1000]
     for bet in bets:
         builder.button(text=f"{bet}₽", callback_data=f"bj_bet_{bet}")
-    builder.adjust(2)
+    builder.button(text="🎲 Своя ставка", callback_data="bj_custom_bet")
+    builder.button(text="🔙 Назад", callback_data=MAIN_MENU)
+    builder.adjust(2,1)
     
     await message.edit_text(
-        "🎰 Выберите размер ставки:",
+        "🎰 Выберите или введите ставку:",
         reply_markup=builder.as_markup()
     )
+
+@dp.callback_query(F.data == "bj_custom_bet")
+async def handle_custom_bet(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "💎 Введите сумму ставки цифрами (мин 100₽, макс 5000₽):",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="play_21")]]
+        )
+    )
+    await callback.answer()
 
 @dp.callback_query(F.data.startswith(CHECK_SUB))
 async def check_sub_callback(callback: types.CallbackQuery):
@@ -1364,6 +1370,37 @@ async def select_shackles(callback: types.CallbackQuery):
     await callback.answer()
 
 # Команда для админа (/fix_economy), чтобы сбросить аномальные балансы
+@dp.message(F.text & F.chat.type == "private")
+async def handle_custom_bet_input(message: Message):
+    try:
+        user_id = message.from_user.id
+        if user_id not in users:
+            return
+
+        # Проверяем что сообщение от нашего запроса на ставку
+        if not message.text.isdigit():
+            return
+
+        bet = int(message.text)
+        if bet < 100 or bet > 5000:
+            await message.reply("❌ Ставка должна быть от 100 до 5000₽")
+            return
+
+        if users[user_id]["balance"] < bet:
+            await message.reply("❌ Недостаточно средств на балансе")
+            return
+
+        # Создаем игру
+        if user_id in active_games:
+            del active_games[user_id]
+
+        game = BlackjackGame(user_id, bet, bot)
+        active_games[user_id] = game
+        await game.start_game(message)
+
+    except Exception as e:
+        logging.error(f"Ошибка кастомной ставки: {e}")
+        await message.answer("❌ Некорректная сумма ставки", reply_markup=main_keyboard())
 
 @dp.callback_query(F.data.startswith(SHACKLES_PREFIX))
 async def buy_shackles(callback: types.CallbackQuery):
