@@ -872,56 +872,6 @@ async def blackjack_action_handler(callback: types.CallbackQuery):
 
 
 
-@dp.message(F.text & F.chat.type == "private")
-async def handle_custom_bet_input(message: Message):
-    try:
-        user_id = message.from_user.id
-        if user_id not in users:
-            return
-
-        # Проверяем, ожидаем ли мы ставку от этого пользователя
-        if user_id not in user_search_cache['awaiting_bet']:
-            return  # Игнорируем сообщения не в контексте ставки
-
-        # Удаляем из ожидания сразу после получения сообщения
-        user_search_cache['awaiting_bet'].discard(user_id)
-
-        # Валидация ввода
-        if not message.text.isdigit():
-            await message.reply("❌ Введите целое число!", reply_markup=main_keyboard())
-            return
-
-        bet = int(message.text)
-        MIN_BET = 100
-        MAX_BET = 20000
-
-        if not (MIN_BET <= bet <= MAX_BET):
-            await message.reply(
-                f"❌ Ставка должна быть от {MIN_BET}₽ до {MAX_BET}₽",
-                reply_markup=main_keyboard()
-            )
-            return
-
-        # Проверка баланса
-        if users[user_id]["balance"] < bet:
-            await message.reply(
-                f"❌ Недостаточно средств! Ваш баланс: {users[user_id]['balance']}₽",
-                reply_markup=main_keyboard()
-            )
-            return
-
-        # Очистка предыдущей игры
-        if user_id in active_games:
-            del active_games[user_id]
-
-        # Создание новой игры
-        game = BlackjackGame(user_id, bet, bot)
-        active_games[user_id] = game
-        await game.start_game(message)
-
-    except Exception as e:
-        logging.error(f"Ошибка ввода ставки: {e}", exc_info=True)
-        await message.answer("❌ Ошибка обработки ставки", reply_markup=main_keyboard())
 
 @dp.callback_query(F.data == SEARCH_USER)
 async def search_user_handler(callback: types.CallbackQuery):
@@ -987,6 +937,58 @@ async def work_handler(callback: types.CallbackQuery):
     F.text.startswith('@') &
     (F.chat.type == "private")  # Только ЛС
 )
+
+@dp.message(F.text & F.chat.type == "private")
+async def handle_custom_bet_input(message: Message):
+    try:
+        user_id = message.from_user.id
+        if user_id not in users:
+            return
+
+        # Проверяем, ожидаем ли мы ставку от этого пользователя
+        if user_id not in user_search_cache['awaiting_bet']:
+            return  # Игнорируем сообщения не в контексте ставки
+
+        # Удаляем из ожидания сразу после получения сообщения
+        user_search_cache['awaiting_bet'].discard(user_id)
+
+        # Валидация ввода
+        if not message.text.strip().isdigit():
+            await message.reply("❌ Введите только цифры (например: 1000)")
+            return
+
+        bet = int(message.text)
+        MIN_BET = 100
+        MAX_BET = 20000
+
+        if not (MIN_BET <= bet <= MAX_BET):
+            await message.reply(
+                f"❌ Ставка должна быть от {MIN_BET}₽ до {MAX_BET}₽",
+                reply_markup=main_keyboard()
+            )
+            return
+
+        # Проверка баланса
+        if users[user_id]["balance"] < bet:
+            await message.reply(
+                f"❌ Недостаточно средств! Ваш баланс: {users[user_id]['balance']}₽",
+                reply_markup=main_keyboard()
+            )
+            return
+
+        # Очистка предыдущей игры
+        if user_id in active_games:
+            del active_games[user_id]
+
+        # Создание новой игры
+        game = BlackjackGame(user_id, bet, bot)
+        active_games[user_id] = game
+        await game.start_game(message)
+
+    except Exception as e:
+        logging.error(f"Ошибка ввода ставки: {e}", exc_info=True)
+        await message.answer("❌ Ошибка обработки ставки", reply_markup=main_keyboard())
+
 async def process_username(message: Message):
     try:
         # Нормализация username (удаляем @ и лишние пробелы)
