@@ -293,21 +293,21 @@ class BlackjackGame:
             await self.cleanup_game()
 
     async def update_display(self):
-    try:
-        dealer_status = "Карта дилера: " 
-        if self.game_over:
-            dealer_status = f"Дилер: {self.calculate_hand(self.dealer_hand)}"
-        else:
-            dealer_status = f"Дилер: {self.dealer_hand[0]} ?"
-            
-        await self.message.edit_text(
-            f"💰 Ставка: {self.bet}₽\n"
-            f"Ваши карты: {self.player_hand} ({self.calculate_hand(self.player_hand)})\n"
-            f"{dealer_status}",
-            reply_markup=get_game_keyboard(self)  # Используем новую функцию
-        )
-    except Exception as e:
-        logging.error(f"Ошибка отображения: {e}")
+        try:
+            dealer_status = "Карта дилера: " 
+            if self.game_over:
+                dealer_status = f"Дилер: {self.calculate_hand(self.dealer_hand)}"
+            else:
+                dealer_status = f"Дилер: {self.dealer_hand[0]} ?"
+                
+            await self.message.edit_text(
+                f"💰 Ставка: {self.bet}₽\n"
+                f"Ваши карты: {self.player_hand} ({self.calculate_hand(self.player_hand)})\n"
+                f"{dealer_status}",
+                reply_markup=get_game_keyboard(self)  # Используем новую функцию
+            )
+        except Exception as e:
+            logging.error(f"Ошибка отображения: {e}")
 
     async def cleanup_games():
         while True:
