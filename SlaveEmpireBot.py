@@ -106,7 +106,20 @@ def main_keyboard():
 def get_db_connection():
     return psycopg2.connect(os.getenv("DATABASE_URL"))
 
-
+async def show_bet_selection(message: types.Message):
+    """Показывает меню выбора ставки с кастомным вводом"""
+    builder = InlineKeyboardBuilder()
+    bets = [500, 1000]
+    for bet in bets:
+        builder.button(text=f"{bet}₽", callback_data=f"bj_bet_{bet}")
+    builder.button(text="🎲 Своя ставка", callback_data="bj_custom_bet")
+    builder.button(text="🔙 Назад", callback_data=MAIN_MENU)
+    builder.adjust(2, 1)
+    
+    await message.edit_text(
+        "🎰 Выберите или введите ставку (мин 100₽, макс 5000₽):",
+        reply_markup=builder.as_markup()
+    )
 
 async def cleanup_games():
     while True:
@@ -226,6 +239,19 @@ class BlackjackGame:
             if self.user_id in active_games:
                 del active_games[self.user_id]
     
+            # Автоматическое определение результата, если не задан
+            if result is None:
+                if player_value > 21:
+                    result = 'lose'
+                elif dealer_value > 21:
+                    result = 'win'
+                elif player_value > dealer_value:
+                    result = 'win'
+                elif player_value < dealer_value:
+                    result = 'lose'
+                else:
+                    result = 'draw'
+    
             # Расчет результата
             if result == 'blackjack':
                 win_amount = int(self.bet * 2.5)
@@ -240,7 +266,7 @@ class BlackjackGame:
                 user["balance"] -= self.bet
                 text = f"💸 Проигрыш: {self.bet}₽"
     
-            save_db()  # Сохраняем изменения баланса
+            save_db()
     
             await self.message.edit_text(
                 f"{text}\n\n"
@@ -836,20 +862,7 @@ async def blackjack_action_handler(callback: types.CallbackQuery):
         if user_id in active_games:
             del active_games[user_id]
 
-async def show_bet_selection(message: types.Message):
-    """Показывает меню выбора ставки с кастомным вводом"""
-    builder = InlineKeyboardBuilder()
-    bets = [500, 1000]
-    for bet in bets:
-        builder.button(text=f"{bet}₽", callback_data=f"bj_bet_{bet}")
-    builder.button(text="🎲 Своя ставка", callback_data="bj_custom_bet")
-    builder.button(text="🔙 Назад", callback_data=MAIN_MENU)
-    builder.adjust(2,1)
-    
-    await message.edit_text(
-        "🎰 Выберите или введите ставку:",
-        reply_markup=builder.as_markup()
-    )
+
 
 @dp.callback_query(F.data == "bj_custom_bet")
 async def handle_custom_bet(callback: types.CallbackQuery):
