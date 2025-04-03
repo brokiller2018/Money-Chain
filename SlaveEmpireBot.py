@@ -864,51 +864,58 @@ async def blackjack_action_handler(callback: types.CallbackQuery):
 
 
 
-@dp.callback_query(F.data == "bj_custom_bet")
-async def handle_custom_bet(callback: types.CallbackQuery):
-    await callback.message.edit_text(
-        "💎 Введите сумму ставки цифрами (мин 100₽, макс 5000₽):",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="play_21")]]
-        )
-    )
-    await callback.answer()
-
-@dp.callback_query(F.data.startswith(CHECK_SUB))
-async def check_sub_callback(callback: types.CallbackQuery):
-    user_id = int(callback.data.replace(CHECK_SUB, ""))
-    
-    if await check_subscription(user_id):
-        # Добавляем пользователя если его еще нет
+@dp.message(F.text & F.chat.type == "private")
+async def handle_custom_bet_input(message: Message):
+    try:
+        user_id = message.from_user.id
         if user_id not in users:
-            users[user_id] = {
-                "balance": 100,
-                "slaves": [],
-                "owner": None,
-                "price": 100,
-                "last_work": None,
-                "upgrades": {key: 0 for key in upgrades},
-                "total_income": 0,
-                "username": callback.from_user.username,
-                "last_passive": datetime.now(),
-                "income_per_sec": 0.0167,
-                "referrer": None  # Сохраняем реферала
-            }
+            return
+
+        # Проверяем контекст - был ли запрос на ставку
+        if not user_id in user_search_cache.get('awaiting_bet', []):
+            return
+
+        # Удаляем флаг ожидания ставки
+        user_search_cache['awaiting_bet'].remove(user_id)
+
+        if not message.text.isdigit():
+            await message.reply("❌ Введите число!", reply_markup=main_keyboard())
+            return
+
+        bet = int(message.text)
+        MIN_BET = 100
+        MAX_BET = 20000
         
-        # Начисляем бонус рефералу
-        referrer_id = users[user_id].get("referrer")
-        if referrer_id and referrer_id in users:
-            bonus = 50  # 10% от стартового баланса
-            users[referrer_id]["balance"] += bonus
-            users[referrer_id]["total_income"] += bonus
-            save_db()
-            
-        save_db()
-        await callback.message.edit_text("✅ Регистрация завершена!")
-        await callback.message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
-    else:
-        await callback.answer("❌ Вы не подписаны!", show_alert=True)
-    await callback.answer()
+        if bet < MIN_BET or bet > MAX_BET:
+            await message.reply(
+                f"❌ Ставка должна быть от {MIN_BET}₽ до {MAX_BET}₽",
+                reply_markup=main_keyboard()
+            )
+            return
+
+        if users[user_id]["balance"] < bet:
+            await message.reply(
+                "❌ Недостаточно средств на балансе",
+                reply_markup=main_keyboard()
+            )
+            return
+
+        # Удаляем предыдущую игру
+        if user_id in active_games:
+            del active_games[user_id]
+
+        # Создаем новую игру
+        game = BlackjackGame(user_id, bet, bot)
+        active_games[user_id] = game
+        await game.start_game(message)
+
+    except Exception as e:
+        logging.error(f"Ошибка кастомной ставки: {e}")
+        await message.answer(
+            "❌ Ошибка обработки ставки",
+            reply_markup=main_keyboard()
+        )
+
 @dp.callback_query(F.data == SEARCH_USER)
 async def search_user_handler(callback: types.CallbackQuery):
     await callback.message.edit_text(
@@ -1372,37 +1379,15 @@ async def select_shackles(callback: types.CallbackQuery):
     await callback.answer()
 
 # Команда для админа (/fix_economy), чтобы сбросить аномальные балансы
-@dp.message(F.text & F.chat.type == "private")
-async def handle_custom_bet_input(message: Message):
-    try:
-        user_id = message.from_user.id
-        if user_id not in users:
-            return
-
-        # Проверяем что сообщение от нашего запроса на ставку
-        if not message.text.isdigit():
-            return
-
-        bet = int(message.text)
-        if bet < 100 or bet > 5000:
-            await message.reply("❌ Ставка должна быть от 100 до 5000₽")
-            return
-
-        if users[user_id]["balance"] < bet:
-            await message.reply("❌ Недостаточно средств на балансе")
-            return
-
-        # Создаем игру
-        if user_id in active_games:
-            del active_games[user_id]
-
-        game = BlackjackGame(user_id, bet, bot)
-        active_games[user_id] = game
-        await game.start_game(message)
-
-    except Exception as e:
-        logging.error(f"Ошибка кастомной ставки: {e}")
-        await message.answer("❌ Некорректная сумма ставки", reply_markup=main_keyboard())
+@dp.callback_query(F.data == "bj_custom_bet")
+async def handle_custom_bet(callback: types.CallbackQuery):
+    await callback.message.edit_text(
+        "💎 Введите сумму ставки цифрами (мин 100₽, макс 5000₽):",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="play_21")]]
+        )
+    )
+    await callback.answer()
 
 @dp.callback_query(F.data.startswith(SHACKLES_PREFIX))
 async def buy_shackles(callback: types.CallbackQuery):
