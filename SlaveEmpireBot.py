@@ -270,18 +270,27 @@ class BlackjackGame:
 
     async def update_display(self):
         try:
-            # Показываем статус дилера
             dealer_status = "Карта дилера: " 
             if self.game_over:
                 dealer_status = f"Дилер: {self.calculate_hand(self.dealer_hand)}"
             else:
                 dealer_status = f"Дилер: {self.dealer_hand[0]} ?"
                 
+            # Создаем клавиатуру с кнопками действий
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="🎯 Взять", callback_data="bj_hit")
+            keyboard.button(text="✋ Стоп", callback_data="bj_stand")
+            
+            if len(self.player_hand) == 2 and not self.game_over:
+                keyboard.button(text="🔼 Удвоить", callback_data="bj_double")
+                
+            keyboard.adjust(2)
+            
             await self.message.edit_text(
                 f"💰 Ставка: {self.bet}₽\n"
                 f"Ваши карты: {self.player_hand} ({self.calculate_hand(self.player_hand)})\n"
                 f"{dealer_status}",
-                reply_markup=... 
+                reply_markup=keyboard.as_markup()
             )
         except Exception as e:
             logging.error(f"Ошибка отображения: {e}")
@@ -780,19 +789,16 @@ async def blackjack_handler(callback: types.CallbackQuery):
         user_id = callback.from_user.id
         action = callback.data.split("_")[1]
         
-        # Немедленная проверка наличия игры
         if user_id not in active_games:
-            await callback.answer("❌ Активная игра не найдена! Начните новую.")
+            await callback.answer("❌ Начните новую игру!", show_alert=True)
             await show_bet_selection(callback.message)
             return
 
         game = active_games[user_id]
         
-        # Проверка статуса игры
         if game.game_over:
-            await callback.answer("Эта игра уже завершена")
+            await callback.answer("Игра завершена")
             return
-
         # Обновляем время последнего действия
         game.last_action_time = datetime.now()
         
@@ -1292,11 +1298,16 @@ async def blackjack_bet_handler(callback: types.CallbackQuery):
         user_id = callback.from_user.id
         bet = int(callback.data.split("_")[2])
         
-        # Удаляем старые игры
-        if user_id in active_games:
-            del active_games[user_id]
+        # Проверяем баланс
+        if users[user_id]["balance"] < bet:
+            await callback.answer("❌ Недостаточно средств!", show_alert=True)
+            return
 
-        # Создаем новую игру с ВСЕМИ параметрами
+        # Снимаем деньги сразу
+        users[user_id]["balance"] -= bet
+        save_db()
+        
+        # Создаем игру
         game = BlackjackGame(
             user_id=user_id,
             bet=bet,
@@ -1304,12 +1315,11 @@ async def blackjack_bet_handler(callback: types.CallbackQuery):
         )
         active_games[user_id] = game
         
-        # Запускаем игру
         await game.start_game(callback.message)
         
     except Exception as e:
         logging.error(f"Ошибка создания игры: {e}")
-        await callback.answer("❌ Ошибка при создании игры!")
+        await callback.answer("❌ Ошибка при старте игры!")
 
 @dp.callback_query(F.data == "select_shackles")
 async def select_shackles(callback: types.CallbackQuery):
@@ -1749,7 +1759,11 @@ async def main():
         await on_startup()
         
         # Основной цикл бота
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        await dp.start_polling(
+        bot, 
+        allowed_updates=dp.resolve_used_update_types(),
+        skip_updates=True
+    )
         
     except (KeyboardInterrupt, SystemExit):
         logger.info("Бот остановлен вручную")
