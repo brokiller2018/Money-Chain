@@ -686,6 +686,57 @@ async def start_command(message: Message):
     else:
         await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
 
+@dp.message(F.text & F.chat.type == "private")
+async def handle_custom_bet_input(message: Message):
+    try:
+        user_id = message.from_user.id
+        if user_id not in users:
+            return
+
+        # Проверяем, ожидаем ли мы ставку от этого пользователя
+        if user_id not in user_search_cache['awaiting_bet']:
+            return  # Игнорируем сообщения не в контексте ставки
+
+        # Удаляем из ожидания сразу после получения сообщения
+        user_search_cache['awaiting_bet'].discard(user_id)
+
+        # Валидация ввода
+        if not message.text.strip().isdigit():
+            await message.reply("❌ Введите только цифры (например: 1000)")
+            return
+
+        bet = int(message.text)
+        MIN_BET = 100
+        MAX_BET = 20000
+
+        if not (MIN_BET <= bet <= MAX_BET):
+            await message.reply(
+                f"❌ Ставка должна быть от {MIN_BET}₽ до {MAX_BET}₽",
+                reply_markup=main_keyboard()
+            )
+            return
+
+        # Проверка баланса
+        if users[user_id]["balance"] < bet:
+            await message.reply(
+                f"❌ Недостаточно средств! Ваш баланс: {users[user_id]['balance']}₽",
+                reply_markup=main_keyboard()
+            )
+            return
+
+        # Очистка предыдущей игры
+        if user_id in active_games:
+            del active_games[user_id]
+
+        # Создание новой игры
+        game = BlackjackGame(user_id, bet, bot)
+        active_games[user_id] = game
+        await game.start_game(message)
+
+    except Exception as e:
+        logging.error(f"Ошибка ввода ставки: {e}", exc_info=True)
+        await message.answer("❌ Ошибка обработки ставки", reply_markup=main_keyboard())
+
 @dp.message(Command('fix_economy'))
 async def fix_economy(message: Message):
     if message.from_user.id != ADMIN_ID:
@@ -896,93 +947,54 @@ async def work_handler(callback: types.CallbackQuery):
     if not user:
         await callback.answer("❌ Сначала зарегистрируйтесь!", show_alert=True)
         return
-    
+
     now = datetime.now()
-    cooldown = timedelta(minutes=30)  # Увеличен кулдаун
     
+    # 🔧 Улучшение "еда" — уменьшает кулдаун
+    food_level = user.get("upgrades", {}).get("food", 0)
+    reduction = 1 - 0.08 * food_level  # 8% за уровень
+    reduction = max(0.2, reduction)    # Минимум 20% от исходного кулдауна
+    
+    cooldown = timedelta(minutes=30 * reduction)
+
+    # ⏳ Проверка кулдауна
     if user["last_work"] and (now - user["last_work"]) < cooldown:
         remaining = (user["last_work"] + cooldown - now).seconds // 60
         await callback.answer(f"⏳ Подождите еще {remaining} минут", show_alert=True)
         return
+
     if user.get("work_count", 0) >= DAILY_WORK_LIMIT:
         await callback.answer("❌ Достигнут дневной лимит!")
         return
+
     user["work_count"] = user.get("work_count", 0) + 1
-    # Рассчитываем текущий пассивный доход в минуту
+
+    # 📈 Расчет пассивного дохода в минуту
     passive_per_min = 1 + user.get("upgrades", {}).get("storage", 0) * 10
     passive_per_min += sum(
         100 * (1 + 0.3 * users[slave_id].get("slave_level", 0))
         for slave_id in user.get("slaves", [])
         if slave_id in users
     ) / 60
-    
-    # Бонус = 20 минут пассивного дохода * множитель кнутов
+
+    # 📦 Бонус за работу = 20 минут пассивки × множитель от кнутов
     whip_bonus = 1 + user.get("upgrades", {}).get("whip", 0) * 0.25
-    work_bonus = passive_per_min * 10 * (1 + whip_bonus)
-    
+    work_bonus = passive_per_min * 20 * whip_bonus
+
     user["balance"] += work_bonus
     user["total_income"] += work_bonus
     user["last_work"] = now
-    
+
     await callback.message.edit_text(
         f"💼 Бонусная работа принесла: {work_bonus:.1f}₽\n"
         f"▸ Это эквивалент 20 минут пассивки!\n"
-        f"▸ Ваш текущий пассив/мин: {passive_per_min:.1f}₽",
+        f"▸ Ваш текущий пассив/мин: {passive_per_min:.1f}₽\n"
+        f"▸ Кулдаун с учётом еды: {cooldown.total_seconds() // 60:.0f} минут",
         reply_markup=main_keyboard()
     )
     await callback.answer()
 
 
-@dp.message(F.text & F.chat.type == "private")
-async def handle_custom_bet_input(message: Message):
-    try:
-        user_id = message.from_user.id
-        if user_id not in users:
-            return
-
-        # Проверяем, ожидаем ли мы ставку от этого пользователя
-        if user_id not in user_search_cache['awaiting_bet']:
-            return  # Игнорируем сообщения не в контексте ставки
-
-        # Удаляем из ожидания сразу после получения сообщения
-        user_search_cache['awaiting_bet'].discard(user_id)
-
-        # Валидация ввода
-        if not message.text.strip().isdigit():
-            await message.reply("❌ Введите только цифры (например: 1000)")
-            return
-
-        bet = int(message.text)
-        MIN_BET = 100
-        MAX_BET = 20000
-
-        if not (MIN_BET <= bet <= MAX_BET):
-            await message.reply(
-                f"❌ Ставка должна быть от {MIN_BET}₽ до {MAX_BET}₽",
-                reply_markup=main_keyboard()
-            )
-            return
-
-        # Проверка баланса
-        if users[user_id]["balance"] < bet:
-            await message.reply(
-                f"❌ Недостаточно средств! Ваш баланс: {users[user_id]['balance']}₽",
-                reply_markup=main_keyboard()
-            )
-            return
-
-        # Очистка предыдущей игры
-        if user_id in active_games:
-            del active_games[user_id]
-
-        # Создание новой игры
-        game = BlackjackGame(user_id, bet, bot)
-        active_games[user_id] = game
-        await game.start_game(message)
-
-    except Exception as e:
-        logging.error(f"Ошибка ввода ставки: {e}", exc_info=True)
-        await message.answer("❌ Ошибка обработки ставки", reply_markup=main_keyboard())
 
 async def process_username(message: Message):
     try:
@@ -1535,14 +1547,10 @@ async def buy_slave_handler(callback: types.CallbackQuery):
         # 11. Процесс покупки
         try:
             # Если был предыдущий владелец
-            if previous_owner_id and previous_owner_id in users:
-                previous_owner = users[previous_owner_id]
-                
-                # Удаляем из списка рабов
+            if owner_id and owner_id in users:
+                previous_owner = users[owner_id]
                 if slave_id in previous_owner.get("slaves", []):
                     previous_owner["slaves"].remove(slave_id)
-                
-                # Начисляем комиссию (30%)
                 commission = int(price * 0.3)
                 previous_owner["balance"] += commission
                 previous_owner["total_income"] += commission
