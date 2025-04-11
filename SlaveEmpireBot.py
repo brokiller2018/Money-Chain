@@ -1332,13 +1332,16 @@ async def play_21_handler(callback: types.CallbackQuery):
             game = active_games[user_id]
             if not game.game_over:
                 await game.update_display()
+                await callback.answer()
                 return
-        
+
         await show_bet_selection(callback.message)
+        await callback.answer() 
 
     except Exception as e:
         logging.error(f"Ошибка меню игры: {e}")
         await callback.answer("⚠️ Ошибка запуска")
+
 
 
 @dp.message(Command("bj_stop"))
