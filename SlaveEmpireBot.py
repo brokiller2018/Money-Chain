@@ -587,7 +587,7 @@ async def passive_income_task():
                 total_income = base_income + storage_income + slaves_income
                 
                 # Защита от переполнения
-                user["balance"] = min(user.get("balance", 0) + total_income, 10_000_000)
+                user["balance"] = min(user.get("balance", 0) + total_income, 1_000_000_000)
                 user["total_income"] = user.get("total_income", 0) + total_income
                 user["last_passive"] = now
             
@@ -932,11 +932,6 @@ async def work_handler(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-@dp.message(
-    F.text & 
-    F.text.startswith('@') &
-    (F.chat.type == "private")  # Только ЛС
-)
 
 @dp.message(F.text & F.chat.type == "private")
 async def handle_custom_bet_input(message: Message):
@@ -1507,13 +1502,19 @@ async def buy_slave_handler(callback: types.CallbackQuery):
             return
 
         # 8. Проверка текущего владельца
-        previous_owner_id = slave.get("owner")
-        if previous_owner_id and previous_owner_id != buyer_id:
-            await callback.answer(
-                f"❌ Раб принадлежит @{users[previous_owner_id].get('username', 'unknown')}",
-                show_alert=True
-            )
-            return
+        owner_id = slave.get("owner")
+        if owner_id:
+            shackles = users.get(owner_id, {}).get("shackles", {})
+            if slave_id in shackles:
+                until = shackles[slave_id]
+                if isinstance(until, str):
+                    until = datetime.fromisoformat(until)
+                if until > datetime.now():
+                    await callback.answer(
+                        f"⛓ Раб в кандалах до {until.strftime('%d.%m %H:%M')}, покупка невозможна!",
+                        show_alert=True
+                    )
+                    return
 
         # 9. Расчет цены
         try:
