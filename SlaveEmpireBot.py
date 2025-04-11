@@ -700,7 +700,7 @@ async def start_command(message: Message):
     else:
         await message.answer("🔮 Главное меню:", reply_markup=main_keyboard())
 
-@dp.message(F.text & F.chat.type == "private")
+@dp.message(F.text)
 async def handle_custom_bet_input(message: Message):
     try:
         user_id = message.from_user.id
