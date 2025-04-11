@@ -600,6 +600,20 @@ async def passive_income_task():
             await asyncio.sleep(10)  # Пауза при ошибке
 
 # Обработчики команд
+@dp.callback_query(F.data == "bj_custom_bet")
+async def handle_custom_bet(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user_search_cache['awaiting_bet'].add(user_id)  # Добавляем в ожидание
+    
+    await callback.message.edit_text(
+        "💎 Введите сумму ставки цифрами (мин 100₽, макс 1.000.000₽):",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="bj_cancel_bet")]]
+        )
+    )
+    await callback.answer()
+    await bot.send_message(user_id, "Введите сумму ставки:")
+
 @dp.message(Command('start'))
 async def start_command(message: Message):
     user_id = message.from_user.id
@@ -1395,18 +1409,7 @@ async def select_shackles(callback: types.CallbackQuery):
     await callback.answer()
 
 # Команда для админа (/fix_economy), чтобы сбросить аномальные балансы
-@dp.callback_query(F.data == "bj_custom_bet")
-async def handle_custom_bet(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    user_search_cache['awaiting_bet'].add(user_id)  # Добавляем в ожидание
-    
-    await callback.message.edit_text(
-        "💎 Введите сумму ставки цифрами (мин 100₽, макс 20000₽):",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="bj_cancel_bet")]]
-        )
-    )
-    await callback.answer()
+
 
 @dp.callback_query(F.data.startswith(SHACKLES_PREFIX))
 async def buy_shackles(callback: types.CallbackQuery):
