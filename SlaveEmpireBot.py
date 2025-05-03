@@ -718,7 +718,7 @@ async def handle_text_message(message: Message):
             bet = int(message.text)
             
             MIN_BET = 100
-            MAX_BET = 20000
+            MAX_BET = 1000000  # Increased maximum bet
 
             if not (MIN_BET <= bet <= MAX_BET):
                 await message.reply(
@@ -742,7 +742,7 @@ async def handle_text_message(message: Message):
             # Create new game
             game = BlackjackGame(user_id, bet, bot)
             active_games[user_id] = game
-            await game.start_game(message)
+            await game.start_game(await message.answer("Начинаем игру..."))
             
         # Check if we're expecting a username search
         elif user_id in user_search_cache['awaiting_username']:
